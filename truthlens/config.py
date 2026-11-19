@@ -53,6 +53,7 @@ RELIABILITY = {
     "video_watermark": 0.30,   # visible corner overlay: a lead for a human to read, not proof on its own
     "audio_ml": 0.30,          # lowered: model is unreliable on real-world audio (see HANDOFF P2)
     "audio_bandwidth": 0.20,
+    "audio_format": 0.25,      # stored at a TTS-native sample rate (22.05 / 24 kHz): weak provenance lead
     "audio_digital_silence": 0.45,
     "audio_splice": 0.40,
     "text_language": 0.15,
@@ -72,6 +73,12 @@ VALIDATED_MODELS = {
     # is listed. Add a model back only after it separates 10+ real from 10+ AI files in tools/eval_detectors.py.
 }
 VALIDATED_RELIABILITY = 0.55   # replaces RELIABILITY["ml_image_ai"] when the loaded model is validated
+
+# Audio deepfake models that FAILED local evaluation: their scores are recorded for transparency but never used.
+UNRELIABLE_AUDIO_MODELS = {
+    "MelodyMachine/Deepfake-audio-detection-V2": "2026-11-19: wrong on 4/4 files (2 AI voices scored 0% synthetic, "
+                                                 "2 real voices scored 100%).",
+}
 
 VIDEO_MAX_SAMPLED_FRAMES = 32     # frames sent to ML models
 VIDEO_TEMPORAL_MAX_FRAMES = 3000  # frames scanned for temporal checks

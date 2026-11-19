@@ -8,7 +8,7 @@ import numpy as np
 from scipy import signal
 
 from . import models
-from .config import AUDIO_CHUNK_SECONDS, RELIABILITY as R
+from .config import UNRELIABLE_AUDIO_MODELS, AUDIO_CHUNK_SECONDS, RELIABILITY as R
 from .evidence import Indicator
 from .media_io import load_audio, probe
 
@@ -90,6 +90,18 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) 
                "bit_rate": a.get("bit_rate") or info.get("format", {}).get("bit_rate"),
                "encoder": (info.get("format", {}).get("tags", {}) or {}).get("encoder")}
     inds, marks = [], []
+    try:
+        sr_i = int(sr or 0)
+    except (TypeError, ValueError):
+        sr_i = 0
+    if sr_i in (22050, 24000):
+        inds.append(Indicator(nid(), ev.id, label, "audio_format", "Stored at a text-to-speech sample rate", "synthetic",
+                              f"Audio is stored at {sr_i} Hz. Many TTS / voice-cloning engines output this natively (e.g. OpenAI TTS and "
+                              "Coqui XTTS at 24 kHz, Piper at 22.05 kHz), while phone and camera recordings are usually 44.1 or 48 kHz.",
+                              "A TTS-native sample rate is a provenance lead that the voice may have been generated, not recorded.",
+                              0.5, R["audio_format"], {"type": "file"},
+                              ["Some apps, downloaders and podcast exports resample audio to 22/24 kHz.",
+                               "Recorded speech can be converted to any sample rate, so this is a lead, not proof."]))
     if dur < 0.5:
         return {"indicators": [], "visuals": {}, "metrics": metrics, "transcript": {"text": "", "chunks": []}}
 
@@ -203,7 +215,11 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) 
         ps = np.array([p for *_, p in seg_scores])
         metrics["synthetic_mean_p"] = round(float(ps.mean()), 3)
         flagged = _merge([(a, b, p) for a, b, p in seg_scores if p >= 0.6])
-        if flagged:
+        unreliable = metrics.get("audio_model") in UNRELIABLE_AUDIO_MODELS
+        metrics["audio_model_unreliable"] = unreliable
+        if unreliable:
+            pass   # failed local evaluation: keep its scores in the metrics, but never turn them into findings
+        elif flagged:
             mx = max(p for *_, p in flagged)
             inds.append(Indicator(nid(), ev.id, label, "audio_ml", "Synthetic / cloned speech classifier", "synthetic",
                                   f"{len(flagged)} segment(s) scored as synthetic (max {mx * 100:.0f}%, mean over all speech "

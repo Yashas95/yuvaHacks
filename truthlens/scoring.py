@@ -31,7 +31,7 @@ def band(p):
 FAMILY = {
     "metadata_ai_signature": "provenance", "metadata_editor": "provenance",
     "metadata_missing": "provenance", "metadata_dates": "provenance", "video_metadata": "provenance",
-    "video_watermark": "provenance",
+    "video_watermark": "provenance", "audio_format": "provenance",
     "ela": "pixel", "noise": "pixel", "copy_move": "pixel", "fft": "pixel",
     "video_temporal": "temporal", "video_duplicate_frames": "temporal",
     "audio_bandwidth": "audio_signal", "audio_digital_silence": "audio_signal", "audio_splice": "audio_signal",
@@ -112,7 +112,7 @@ def aggregate(indicators, families_run: set, models_missing: int = 0) -> dict:
     conf = float(np.clip(conf, 0.15, 0.9))
     conf_label = "High" if conf >= 0.7 else "Medium" if conf >= 0.45 else "Low"
     width = round((1 - conf) * 30)
-    label, color = band(p)
+    label, color = band(round(p, 2))   # label matches the rounded percentage shown to the user
     top = sorted(man, key=lambda i: -i.score * i.reliability)[:6]
     return {"likelihood": round(p * 100), "range": [max(0, round(p * 100) - width), min(100, round(p * 100) + width)],
             "band": label, "color": color, "confidence": conf_label, "confidence_value": round(conf, 2),

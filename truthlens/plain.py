@@ -84,6 +84,9 @@ def _sentence(i: dict) -> tuple[str, str]:
     if d == "video_watermark":
         return "check", ("A fixed logo, watermark or caption sits in the corner of the video. Zoom in and read it — if it names an AI tool "
                          "(Veo, Gemini, Kling, Meta AI, Sora), the video was made with AI. Captions and app logos are harmless.")
+    if d == "audio_format":
+        return "check", ("The audio is saved at a sample rate (22 or 24 kHz) that many AI voice tools use by default; phones and cameras "
+                         "record at 44 or 48 kHz. This hints the voice may be generated — but apps can convert audio, so it isn't proof.")
     if d == "audio_ml":
         if auth:
             return "info", "Our voice detector leans towards a natural human voice."
@@ -195,6 +198,18 @@ def _ai_answer(ev: dict, org: dict) -> str:
     inds = ev.get("indicators", [])
     ml = [i for i in inds if i["detector"] in ("ml_image_ai", "ml_face_deepfake", "audio_ml")]
     man_ml = [i for i in ml if i["supports"] == "manipulation"]
+    m = ev.get("metrics") or {}
+    am = m if mod == "audio" else (m.get("audio") or {})
+    if mod in ("audio", "video") and am.get("audio_model_unreliable") and org["kind"] != "ai":
+        fmt = any(i["detector"] == "audio_format" for i in inds)
+        voice = ("<b>We can't tell yet from the voice.</b> Our AI-voice detector failed our tests and is switched off, "
+                 "so “no warning signs” does <i>not</i> mean the voice is human.")
+        if fmt:
+            voice += " One clue points towards AI: the audio is saved at 22–24 kHz, the default of many AI voice tools."
+        if mod == "audio":
+            return voice
+        extra = _ai_answer({**ev, "metrics": {**m, "audio": {}}}, org)   # still report the picture-based detectors
+        return extra + " " + voice
     if org["kind"] == "ai":
         return "<b>Yes, very likely.</b> " + org["why"] + " That's direct evidence from the file, not a statistical guess."
     parts = []

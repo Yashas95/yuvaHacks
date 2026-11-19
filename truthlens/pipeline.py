@@ -122,6 +122,12 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
         limitations.insert(0, "Finding rests on ML classifiers only — no independent forensic, metadata or temporal evidence. "
                               + ("A validated detector was confident, so the likelihood was capped at Moderate (not Strong)."
                                  if overall.get("validated_ml") else "Likelihood was capped and confidence set to Low."))
+    from .config import UNRELIABLE_AUDIO_MODELS
+    if any((r.get("metrics") or {}).get("audio_model_unreliable") or ((r.get("metrics") or {}).get("audio") or {}).get("audio_model_unreliable")
+           for r in results.values()):
+        mid = models.STATUS.get("audio_deepfake", {}).get("model")
+        limitations.insert(0, f"Synthetic-voice classifier {mid} failed local evaluation ({UNRELIABLE_AUDIO_MODELS.get(mid, '')}); "
+                              "its scores are shown but ignored. AI-generated voices cannot currently be ruled out by ear-level analysis.")
     if models.image_ai_validated():
         from .config import VALIDATED_MODELS
         mid = models.STATUS["image_ai"]["model"]
