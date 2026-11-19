@@ -71,6 +71,9 @@ LOCK = threading.Lock()  # one analysis at a time keeps the MacBook Air responsi
 
 # Sample folders offered for one-click demo analysis (never arbitrary paths).
 SAMPLE_DIRS = {"demo": ROOT / "demo_samples", "planted": ROOT / "test_assets"}
+if os.environ.get("TRUTHLENS_HOSTED") and not os.environ.get("TRUTHLENS_PUBLIC_DEMO_SAMPLES"):
+    # demo_samples/ holds real people's media: never serve it to the public unless explicitly opted in
+    SAMPLE_DIRS = {"planted": ROOT / "test_assets"}
 
 
 def _work(job_id, files, text, case):
@@ -220,7 +223,7 @@ HOSTED_WORDING = [
     ("<i>DATA UPLOADED</i><b>0 B</b><small>runs fully on this machine</small>",
      "<i>THIRD-PARTY APIS</i><b>0</b><small>analysis runs on this server only</small>"),
     ("Models run locally on Apple Silicon. Large videos can take a minute.",
-     "Running on a free shared CPU — videos can take a few minutes. Files are deleted when the server restarts."),
+     "Analysis runs on the TruthLens server — large videos can take a minute or two."),
 ]
 
 
