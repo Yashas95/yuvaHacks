@@ -2,6 +2,7 @@
 # Same Python and package versions as the tested local setup; models are baked in at build time so a visitor
 # never waits for downloads.
 FROM python:3.15-slim
+LABEL org.opencontainers.image.source=https://github.com/Yashas95/yuvaHacks
 
 # retried: Debian mirrors occasionally serve mismatched files while they sync
 RUN for i in 1 2 3 4 5; do \

@@ -1,8 +1,9 @@
 {
-  // GitHub Codespaces: builds the same image as the Hugging Face Space (../Dockerfile: Python, ffmpeg,
-  // pinned packages, models baked in) and starts TruthLens in hosted mode on port 7860.
+  // GitHub Codespaces: pulls the ready-made TruthLens image built by .github/workflows/image.yml from
+  // ../Dockerfile (Python, ffmpeg, pinned packages, models baked in) and starts it in hosted mode on port 7860.
+  // Nothing is downloaded from PyPI or Hugging Face when the Codespace starts.
   "name": "TruthLens",
-  "build": { "dockerfile": "../Dockerfile", "context": ".." },
+  "image": "ghcr.io/yashas95/truthlens:latest",
   "remoteUser": "user",
   // Run the image's CMD (python app.py) as the container's main process, so TruthLens is up whenever the
   // Codespace is running, even with no editor attached.

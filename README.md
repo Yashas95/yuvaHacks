@@ -37,8 +37,8 @@ HF_HUB_OFFLINE=1 .venv/bin/python app.py     # force offline (venue without Wi-F
 
 ### Hosted demo (GitHub Codespaces, free hours)
 
-On GitHub: **Code → Codespaces → Create codespace on main**. `.devcontainer/` builds the same image as the
-Space (`Dockerfile`) and starts TruthLens in hosted mode on port 7860. In the **Ports** tab, set port 7860 to
+On GitHub: **Code → Codespaces → Create codespace on main**. `.devcontainer/` pulls the image that `.github/workflows/image.yml` builds from the
+`Dockerfile` (published to `ghcr.io/yashas95/truthlens`) and starts TruthLens in hosted mode on port 7860. In the **Ports** tab, set port 7860 to
 **Public** to share the link. The first build takes ~10–15 min; later starts take a minute or two.
 
 ### Hosted demo (Hugging Face Space)
