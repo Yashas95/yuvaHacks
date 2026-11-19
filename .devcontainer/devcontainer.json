@@ -4,6 +4,9 @@
   "name": "TruthLens",
   "build": { "dockerfile": "../Dockerfile", "context": ".." },
   "remoteUser": "user",
+  // Run the image's CMD (python app.py) as the container's main process, so TruthLens is up whenever the
+  // Codespace is running, even with no editor attached.
+  "overrideCommand": false,
   "hostRequirements": { "cpus": 2, "memory": "8gb" },
   "forwardPorts": [7860],
   "portsAttributes": {
