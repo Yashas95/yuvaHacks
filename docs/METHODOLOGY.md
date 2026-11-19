@@ -98,7 +98,8 @@ A real photo with a pasted region is still "not AI-generated".
 | FaceTime capture | real | 100 % |
 
 Flipping it would be tuning to four anecdotes, so it is **switched off** (`UNRELIABLE_AUDIO_MODELS` in
-`config.py`): its scores are shown in the report, marked "failed evaluation, ignored", and never become findings.
+`config.py`). At first its scores were still computed and shown as "ignored"; since 2026-11-20 it is not run at all
+(see §7), and the report states why.
 Previously the report said the AI reel "leans towards a natural human voice"; now it says it cannot judge by ear.
 An earlier test of `mo-thecreator/Deepfake-audio-detection` scored both TTS and real voices as fake.
 
@@ -138,9 +139,15 @@ signer's organisation from the certificate. An AI source type becomes a provenan
 reliability 0.90); any other manifest stays a neutral note. We do not verify the signature, and the report says so.
 Pinned by `test_c2pa_ai_source_type_is_read_exactly` (also checks that the same words loose in a file don't count).
 
-**Result.** Gemini song 40 % → **92 % Strong · High**. The reader also showed that the TryOnMe image was made with
+**Result.** Gemini song 40 % → **92 % Strong · Medium**. The reader also showed that the TryOnMe image was made with
 Google generative AI and carries SynthID (93 % → 95 %). Re-run controls unchanged: WhatsApp selfie 40 %, macOS TTS 9 %,
 planted splice 45 %, joined clip 74 %, voice note 32 %, iPhone screenshot 5 %.
+**Speed fix found on the hosted demo.** The same song sat at 8 % for minutes on the hosted CPU: the switched-off voice
+model still ran on every 4-second chunk, and Whisper transcribed all 182 s of music. Now the failed voice models are
+not run, speech-to-text covers the first 90 s (stated as a limitation), and progress updates inside the audio step.
+CPU-only time for the song: **11.6 s**. Confidence moved High → Medium because the unused voice model no longer
+counts as a check that ran; the likelihood is unchanged.
+
 **Limit:** once a platform strips the manifest (re-upload, screen recording), this evidence is gone. That is why the
 report recommends asking for the original file and checking SynthID.
 
@@ -153,7 +160,7 @@ report recommends asking for the original file and checking SynthID.
 | Veo 3 via Instagram | AI | 44 % Inconclusive · Low |
 | Wan avatar video | AI | 44 % Inconclusive · Low |
 | TryOnMe image | AI | **95 % Strong** · High (Google C2PA manifest: generative AI) |
-| Gemini-generated song (MP3) | AI | **92 % Strong** · High (Google C2PA manifest: generative AI + SynthID) |
+| Gemini-generated song (MP3) | AI | **92 % Strong** · Medium (Google C2PA manifest: generative AI + SynthID) |
 | ReelAudio (24 kHz) | AI | 48 % Moderate · Medium (sample-rate lead + noise-floor jumps) |
 | macOS TTS voice | AI | 9 % No significant indicators — **missed** |
 | Planted spliced photo | edited | 45 % Moderate (ELA + sensor-noise boxes at the paste) |

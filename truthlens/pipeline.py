@@ -75,7 +75,9 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
                                        f"{r['metrics']['frames_total']} frames were scanned for temporal checks.")
                 limitations.append(f"{ev.name}: ML detectors ran on {len(r['metrics'].get('frame_scores', []))} sampled frames, not every frame.")
             else:
-                r = analyze_audio(ev, case, nid)
+                span = 70 / max(1, len(media))
+                r = analyze_audio(ev, case, nid, step=lambda f, m, b=base, sp=span, n=ev.name:
+                                  progress(b + int(sp * f), f"{n}: {m}"))
                 families |= {"audio_splice", "audio_digital_silence", "audio_bandwidth"}
                 if r["metrics"].get("segment_scores"):
                     families.add("audio_ml")
@@ -125,9 +127,15 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
     from .config import UNRELIABLE_AUDIO_MODELS
     if any((r.get("metrics") or {}).get("audio_model_unreliable") or ((r.get("metrics") or {}).get("audio") or {}).get("audio_model_unreliable")
            for r in results.values()):
-        mid = models.STATUS.get("audio_deepfake", {}).get("model")
-        limitations.insert(0, f"Synthetic-voice classifier {mid} failed local evaluation ({UNRELIABLE_AUDIO_MODELS.get(mid, '')}); "
-                              "its scores are shown but ignored. AI-generated voices cannot currently be ruled out by ear-level analysis.")
+        mid = next((m for r in results.values() for m in [(r.get("metrics") or {}).get("audio_model")
+                    or ((r.get("metrics") or {}).get("audio") or {}).get("audio_model")] if m), "")
+        limitations.insert(0, f"Synthetic-voice classifier {mid} failed local evaluation ({UNRELIABLE_AUDIO_MODELS.get(mid, '')}), "
+                              "so it is not run. AI-generated voices cannot currently be ruled out by ear-level analysis; "
+                              "file labels (C2PA) and signal checks still run.")
+    for r in results.values():
+        tr = r.get("transcript") or {}
+        if tr.get("truncated_at_s"):
+            limitations.append(f"{r['evidence'].name}: speech was transcribed for the first {tr['truncated_at_s']:.0f} s only.")
     if models.image_ai_validated():
         from .config import VALIDATED_MODELS
         mid = models.STATUS["image_ai"]["model"]

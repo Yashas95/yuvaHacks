@@ -94,7 +94,7 @@ self-contained `report.html` (print → PDF).
   Low confidence. "Strong" always needs independent forensic, provenance or temporal evidence.
 - "Looks authentic" from an AI-generation classifier only weakens ML evidence; it never cancels splice/edit evidence.
 - Models are only trusted after local evaluation: `VALIDATED_MODELS` (can lift ML-only findings to Moderate) and
-  `UNRELIABLE_AUDIO_MODELS` (scores shown but ignored) in `config.py` record the measured reason.
+  `UNRELIABLE_AUDIO_MODELS` (not run; the report says why) in `config.py` record the measured reason.
 
 ## How we found what works (summary)
 
@@ -146,7 +146,7 @@ Small sample: treat as anecdotes; the evaluation tooling is in place to grow it.
 |---|---|---|
 | AI-image (images + frames) | `haywoodsloan/ai-image-detector-deploy` (fallback `Organika/sdxl-detector`) | used, not validated (AUC 0.62 on 2 real / 4 AI) |
 | Face deepfake | `prithivMLmods/Deep-Fake-Detector-v2-Model` | used, low reliability (did not separate real/AI on our videos) |
-| Synthetic voice | `MelodyMachine/Deepfake-audio-detection-V2` | **ignored** — failed local evaluation |
+| Synthetic voice | `MelodyMachine/Deepfake-audio-detection-V2` | **not run**: failed local evaluation |
 | Caption ↔ image | `openai/clip-vit-base-patch32` | used |
 | Speech-to-text | `openai/whisper-base` | used |
 | Face detection | OpenCV YuNet (`weights/`) | used |

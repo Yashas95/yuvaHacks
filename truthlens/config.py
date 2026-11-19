@@ -78,8 +78,10 @@ VALIDATED_RELIABILITY = 0.55   # replaces RELIABILITY["ml_image_ai"] when the lo
 UNRELIABLE_AUDIO_MODELS = {
     "MelodyMachine/Deepfake-audio-detection-V2": "2026-11-19: wrong on 4/4 files (2 AI voices scored 0% synthetic, "
                                                  "2 real voices scored 100%).",
+    "mo-thecreator/Deepfake-audio-detection": "2026-11-19: scored both a TTS voice and real voices as fake.",
 }
 
 VIDEO_MAX_SAMPLED_FRAMES = 32     # frames sent to ML models
 VIDEO_TEMPORAL_MAX_FRAMES = 3000  # frames scanned for temporal checks
 AUDIO_CHUNK_SECONDS = 4.0
+ASR_MAX_SECONDS = 90.0            # speech-to-text on the first 90 s only (3-min songs took minutes on the hosted CPU)

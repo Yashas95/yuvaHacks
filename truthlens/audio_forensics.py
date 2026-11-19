@@ -8,7 +8,7 @@ import numpy as np
 from scipy import signal
 
 from . import models
-from .config import UNRELIABLE_AUDIO_MODELS, AUDIO_CHUNK_SECONDS, RELIABILITY as R
+from .config import ASR_MAX_SECONDS, AUDIO_CHUNK_SECONDS, MODELS, RELIABILITY as R, UNRELIABLE_AUDIO_MODELS
 from .evidence import Indicator
 from .media_io import load_audio, probe
 from .provenance import indicators as provenance_indicators, scan as scan_provenance
@@ -80,8 +80,10 @@ def transcribe(y16: np.ndarray) -> dict:
     return {"text": "", "chunks": [], "available": True, "error": err}
 
 
-def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) -> dict:
+def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0, step=None) -> dict:
+    step = step or (lambda frac, msg: None)   # progress inside this file: frac 0..1
     path = source_path or ev.path
+    step(0.05, "Reading the file and its AI labels (C2PA)")
     info = probe(path)
     a = next((s for s in info.get("streams", []) if s.get("codec_type") == "audio"), {})
     y, sr = load_audio(path)
@@ -98,6 +100,7 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) 
         inds += provenance_indicators(ev, prov, nid, label, R)
         meta = {"c2pa_present": prov["c2pa_present"], "provenance": prov,
                 "ai_signatures": ["C2PA digitalSourceType: " + t for t in prov["ai_source_types"]]}
+    step(0.2, "Signal checks: silence gaps, noise floor, band limit")
     try:
         sr_i = int(sr or 0)
     except (TypeError, ValueError):
@@ -199,9 +202,17 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) 
                               0.45, R["audio_bandwidth"], {"type": "file"},
                               ["Phone calls, WhatsApp voice notes and low-bitrate MP3/AAC are band-limited too."]))
 
-    # 4) Synthetic speech classifier, per chunk
-    pipe = models.audio_deepfake()
-    metrics["audio_model"] = models.STATUS.get("audio_deepfake", {}).get("model")
+    # 4) Synthetic speech classifier, per chunk.
+    # Every candidate we have failed local evaluation (config.UNRELIABLE_AUDIO_MODELS), so it is not run at all:
+    # its scores were ignored anyway, and on the hosted CPU it cost minutes per song.
+    cands = [m for m in MODELS["audio_deepfake"]]
+    if cands and all(m in UNRELIABLE_AUDIO_MODELS for m in cands):
+        pipe = None
+        metrics["audio_model"], metrics["audio_model_unreliable"] = cands[0], True
+    else:
+        step(0.35, "Synthetic-voice classifier")
+        pipe = models.audio_deepfake()
+        metrics["audio_model"] = models.STATUS.get("audio_deepfake", {}).get("model")
     seg_scores = []
     if pipe is not None:
         n = int(AUDIO_CHUNK_SECONDS * 16000)
@@ -244,7 +255,12 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) 
                                   "No strong synthetic-speech signature.", 1 - float(ps.mean()), R["audio_ml"] * 0.6,
                                   {"type": "file"}, ["High-quality modern voice clones can evade detection."], supports="authenticity"))
 
-    tr = transcribe(y16)
+    step(0.6, "Transcribing speech (Whisper)")
+    asr_n = int(ASR_MAX_SECONDS * 16000)
+    tr = transcribe(y16[:asr_n])
+    if len(y16) > asr_n:
+        tr["truncated_at_s"] = ASR_MAX_SECONDS
+    step(0.9, "Drawing the spectrogram")
     if t_offset:
         for c in tr["chunks"]:
             c["start"] = None if c["start"] is None else c["start"] + t_offset
