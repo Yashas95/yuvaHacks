@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>TruthLens</title>
+<style>
+body{width:300px;margin:0;padding:16px;font:14px/1.45 -apple-system,Inter,system-ui,sans-serif;color:#0d0d0f;background:#f6f6f3}
+h1{font-size:17px;margin:0 0 2px}p{margin:0 0 12px;color:#6b7179;font-size:12.5px}
+button{width:100%;padding:10px;border-radius:8px;border:0;background:#0d0d0f;color:#fff;font:600 14px inherit;cursor:pointer}
+label{display:block;margin-top:14px;font:600 11px ui-monospace,Menlo,monospace;letter-spacing:.06em;color:#6b7179}
+input{width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;border:1px solid #dcdfe3;border-radius:8px;font:13px inherit}
+.row{display:flex;gap:8px;margin-top:8px}.row button{background:#fff;color:#0d0d0f;border:1px solid #0d0d0f;font-size:13px;padding:7px}
+#st{margin-top:8px;font-size:12.5px;min-height:1em}
+</style></head><body>
+<h1>TruthLens</h1>
+<p>Check a post, reel or photo for editing and AI generation. Or right-click it → “Check with TruthLens”.</p>
+<button id="pick">Pick media on this page</button>
+<label for="srv">TRUTHLENS SERVER</label>
+<input id="srv" placeholder="http://localhost:8000">
+<div class="row"><button id="save">Save</button><button id="test">Test connection</button></div>
+<div id="st"></div>
+<script src="popup.js"></script>
+</body></html>

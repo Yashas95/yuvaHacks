@@ -12,6 +12,7 @@ import hmac
 import html
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -19,13 +20,18 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from truthlens.config import CASES_DIR, ROOT
 from truthlens.evidence import Case, modality_of
 from truthlens.pipeline import run_case
+from truthlens.plain import build as build_plain
 
 app = FastAPI(title="TruthLens")
+# The TruthLens browser extension (extension/) calls the API from its own chrome-extension:// origin.
+app.add_middleware(CORSMiddleware, allow_origin_regex=r"chrome-extension://.*", allow_methods=["GET", "POST"],
+                   allow_headers=["*"], allow_credentials=True)
 HOSTED = bool(os.environ.get("TRUTHLENS_HOSTED"))
 PASSWORD = os.environ.get("TRUTHLENS_PASSWORD", "")
 _TOKEN = hashlib.sha256(("truthlens:" + PASSWORD).encode()).hexdigest() if PASSWORD else ""
@@ -176,6 +182,21 @@ def report_json(case_id: str):
     if not p.exists():
         raise HTTPException(404)
     return FileResponse(p, media_type="application/json", filename=f"{case_id}_report.json")
+
+
+@app.get("/api/summary/{case_id}")
+def summary(case_id: str):
+    """Plain-English verdict for the inline result card and the browser extension."""
+    p = CASES_DIR / Path(case_id).name / "report.json"
+    if not p.exists():
+        raise HTTPException(404)
+    r = json.loads(p.read_text())
+    P, ov = build_plain(r), r["overall"]
+    return {"case_id": Path(case_id).name, "headline": P["headline"], "sub": P["sub"], "color": ov["color"],
+            "band": ov["band"], "likelihood": ov["likelihood"], "confidence": ov["confidence"],
+            "files": [{"name": f.get("name"), "origin": (f.get("origin") or {}).get("label"),
+                       "ai": re.sub(r"<[^>]+>", "", f["answers"]["ai"])} for f in P["files"]],
+            "next_steps": P["next_steps"][:3], "report": f"/case/{Path(case_id).name}"}
 
 
 @app.get("/api/cases")

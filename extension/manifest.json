@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "TruthLens — check this post",
+  "version": "1.0.0",
+  "description": "Right-click a photo, reel or video on Instagram (or any site) and send it to your TruthLens server for an explainable forensic check.",
+  "permissions": ["contextMenus", "storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle" }],
+  "action": { "default_popup": "popup.html", "default_title": "TruthLens" },
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

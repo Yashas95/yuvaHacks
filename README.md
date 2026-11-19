@@ -25,6 +25,13 @@ Two views of every report: **Simple** (plain-English answer per file: *What is t
 screenshot? Was it edited?*) and **Expert** (every measurement). An offline **case assistant** answers questions
 like *"is this AI generated or a screenshot?"* using only the case's own measurements — no LLM, no internet.
 
+### Browser extension: check a post where you see it
+
+[`extension/`](extension/README.md) is a Chrome extension. Right-click a photo, post or reel on Instagram (or any
+site) and choose **Check with TruthLens**. The verdict appears in a panel on the same page, with a link to the full
+report. If the site gives a normal file URL, the extension sends the original file. For streamed reels it sends
+a screen capture of the frame, and the panel says that the metadata and audio checks could not run.
+
 ## Quick start
 
 ```bash
@@ -171,9 +178,11 @@ tools/
   run_demo_batch.sh     run every file in demo_samples/ and print verdicts
   deploy_hf_space.py    create / update the Hugging Face Space
   test_audio_models.py  compare voice-deepfake models on known samples
+extension/              Chrome extension: check a post / reel in place (right-click or pick mode)
 tests/test_core.py      regression tests for the scoring and plain-language rules
 test_assets/            planted test media (synthetic, safe to share)
 docs/METHODOLOGY.md     dated evidence for every detection decision
+docs/ORIGINALITY.md     models + licenses, techniques we implemented, what we built
 docs/HANDOFF.md         original build notes
 ```
 
@@ -182,6 +191,13 @@ docs/HANDOFF.md         original build notes
 Uploaded files are copied read-only into the case folder, hashed (SHA-256) at intake and re-hashed after analysis;
 every step is logged. Nothing is uploaded anywhere. `cases/` and `demo_samples/` (real people's media) are
 git-ignored and never published.
+
+## Originality and third-party models
+
+TruthLens reuses pretrained classifiers, and reuses them unmodified under their licenses. It treats them as its
+*weakest* evidence. The scoring, cross-modal correlation, forensic implementations, evaluation harness, reports and
+extension are our own work. The full list of each model, its author and license, the published techniques we
+implemented, and what we built is in [docs/ORIGINALITY.md](docs/ORIGINALITY.md).
 
 ## Credits
 

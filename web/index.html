@@ -94,7 +94,12 @@ textarea:focus,.qin:focus{outline:none;box-shadow:inset 2px 2px 5px var(--neu-d)
 .go:disabled{opacity:.35;cursor:default;box-shadow:none}
 .err{color:var(--bad);font-size:13px;margin-top:10px}
 /* progress */
-#run{display:none}.ring{display:flex;align-items:center;gap:18px}.ring svg{flex:none}
+#run{display:none}#run{scroll-margin-top:16px}#result{display:none;margin-top:18px;border:1px solid var(--line,#dcdfe3);border-radius:8px;padding:18px;background:#fff}
+#result .vd{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}#result .vd b{font:800 34px Inter,sans-serif}#result .vd span{font-weight:600}
+#result .band{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}#result h3{margin:8px 0 4px;font-size:17px}#result p{margin:4px 0;color:#4a5058;font-size:14px}
+#result ul{margin:8px 0 0;padding-left:18px;font-size:13.5px;color:#4a5058}#result .acts{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+#result .acts a,#result .acts button{flex:1;min-width:150px;text-align:center;padding:11px;border-radius:8px;font:600 14px Inter,sans-serif;cursor:pointer;text-decoration:none}
+#result .acts a{background:#0d0d0f;color:#fff}#result .acts button{background:#fff;border:1px solid #0d0d0f;color:#0d0d0f}.ring{display:flex;align-items:center;gap:18px}.ring svg{flex:none}
 .ring .msg{font-size:15px}.ring .case{font-family:var(--mono);font-size:12px;color:var(--muted)}
 .steps{list-style:none;margin:18px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
 .steps li{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:999px;background:#f4f5f7;color:var(--muted);font-size:13px;
@@ -247,6 +252,7 @@ __SPLINE__
 <div><div class="case" id="rcase"></div><div class="msg" id="msg">Uploading…</div><div class="muted small" id="elapsed"></div></div></div>
 <ul class="steps" id="steps"><li><i></i>Securing evidence — SHA-256 + read-only copies</li><li><i></i>Per-media analysis — metadata, pixels, frames, faces, voice</li>
 <li><i></i>Cross-modal correlation — CLIP, transcript, timestamps, dates</li><li><i></i>Scoring — families, confidence, limitations</li><li><i></i>Building the report</li></ul>
+<div id="result" aria-live="polite"></div>
 </div>
 </div>
 </div>
@@ -316,15 +322,30 @@ function track(job,case_id){
   document.getElementById('msg').textContent=s.message;document.getElementById('elapsed').textContent=((Date.now()-t0)/1000).toFixed(0)+'s elapsed';
   const st=s.status==='done'?5:stepOf(p);
   lis.forEach((l,i)=>{l.className=i<st?'done':i===st?'on':''});flow.forEach((f,i)=>{f.className=i<st?'done':i===st?'on':''});
-  if(s.status==='done'){clearInterval(t);const q=qin.value.trim();setTimeout(()=>location.href='/case/'+case_id+(q?'?ask='+encodeURIComponent(q):''),400)}
+  if(s.status==='done'){clearInterval(t);showResult(case_id,((Date.now()-t0)/1000).toFixed(0))}
   if(s.status==='error'){clearInterval(t);document.getElementById('run').style.display='none';document.getElementById('form').style.display='block';
    document.getElementById('err').textContent='Analysis failed: '+s.message;go.disabled=false}},700);
+}
+async function showResult(case_id,secs){            // the verdict appears right here, in the same card
+ const q=qin.value.trim(),url='/case/'+case_id+(q?'?ask='+encodeURIComponent(q):'');let r;
+ try{r=await (await fetch('/api/summary/'+case_id)).json()}catch(e){location.href=url;return}
+ document.getElementById('msg').textContent='Report ready · '+secs+'s';
+ const el=document.getElementById('result');el.style.display='block';
+ el.innerHTML=`<div class="vd"><b>${r.likelihood}%</b><span><i class="band" style="background:${COL[r.color]||'#8a9099'}"></i>${esc(r.band)}</span><span class="muted small">confidence ${esc(r.confidence)}</span></div>
+ <h3>${esc(r.headline)}</h3><p>${esc(r.sub)}</p>
+ ${r.files.map(f=>`<p><b>${esc(f.name)}</b>${f.origin?' · '+esc(f.origin):''} — ${esc(f.ai)}</p>`).join('')}
+ ${r.next_steps.length?'<ul>'+r.next_steps.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':''}
+ <div class="acts"><a href="${url}">Open full report →</a><button type="button" id="again">Analyze another file</button></div>`;
+ document.getElementById('again').onclick=()=>{el.style.display='none';el.innerHTML='';document.getElementById('run').style.display='none';
+  document.getElementById('form').style.display='block';files.length=0;render();go.disabled=true;sgo.disabled=!sel.size;
+  document.getElementById('analyze').scrollIntoView({behavior:'smooth',block:'start'})};
+ el.scrollIntoView({behavior:'smooth',block:'nearest'});loadCases();
 }
 async function submit(url,fd,btn){
  btn.disabled=true;document.getElementById('err').textContent='';
  const r=await fetch(url,{method:'POST',body:fd});
  if(!r.ok){document.getElementById('err').textContent='Error: '+(await r.text());btn.disabled=false;return}
- const {job,case_id}=await r.json();try{const m=JSON.parse(localStorage.getItem('tl-cases')||'[]');m.unshift(case_id);localStorage.setItem('tl-cases',JSON.stringify(m.slice(0,30)))}catch(e){}track(job,case_id);window.scrollTo({top:0,behavior:'smooth'});
+ const {job,case_id}=await r.json();try{const m=JSON.parse(localStorage.getItem('tl-cases')||'[]');m.unshift(case_id);localStorage.setItem('tl-cases',JSON.stringify(m.slice(0,30)))}catch(e){}track(job,case_id);document.getElementById('analyze').scrollIntoView({behavior:'smooth',block:'start'});
 }
 go.onclick=()=>{const fd=new FormData();files.forEach(f=>fd.append('files',f));fd.append('context',ctx.value);submit('/api/analyze',fd,go)};
 
@@ -354,8 +375,9 @@ function rc(g){
   <div class="fm">${esc(c.band.split(' —')[0])} · ${esc(c.confidence)} confidence · ${esc((c.created||'').slice(0,16).replace('T',' '))}</div></div>
   <div class="ics">${mods.map(ico).join('')}</div></a>`}).join(''):'<p class="muted small">No cases yet.</p>';
 }
-let MINE='';try{MINE=JSON.parse(localStorage.getItem('tl-cases')||'[]').join(',')}catch(e){}
-fetch('/api/cases?ids='+encodeURIComponent(MINE)).then(r=>r.json()).then(c=>{CS=c;rc('all')});
+function loadCases(){let MINE='';try{MINE=JSON.parse(localStorage.getItem('tl-cases')||'[]').join(',')}catch(e){}
+ fetch('/api/cases?ids='+encodeURIComponent(MINE)).then(r=>r.json()).then(c=>{CS=c;rc('all')})}
+loadCases();
 for(const [id,fn] of [['stabs',rs],['ctabs',rc]])document.querySelectorAll('#'+id+' button').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.toggle('on',x===b));fn(b.dataset.g)});
 
