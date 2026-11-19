@@ -1,0 +1,11 @@
+# environment
+.venv/
+__pycache__/
+*.pyc
+# personal / real-person media and analysis outputs — never publish
+cases/
+demo_samples/
+# local logs and tool config
+.*.log
+.claude/
+.DS_Store

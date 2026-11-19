@@ -1,0 +1,15 @@
+torch
+torchvision
+torchaudio
+transformers
+huggingface_hub
+safetensors
+opencv-python-headless
+scipy
+numpy
+pillow
+matplotlib
+python-dateutil
+fastapi
+uvicorn
+python-multipart
