@@ -1,0 +1,8 @@
+.venv/
+cases/
+demo_samples/
+.git/
+__pycache__/
+*.pyc
+.*.log
+.claude/

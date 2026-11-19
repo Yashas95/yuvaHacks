@@ -84,7 +84,9 @@ class Evidence:
 class Case:
     def __init__(self, case_id: str | None = None, root: Path | None = None):
         from .config import CASES_DIR
-        self.id = case_id or dt.datetime.now().strftime("TL-%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4].upper()
+        # hosted demo: long random suffix so other visitors cannot guess a report URL
+        n = 16 if os.environ.get("TRUTHLENS_HOSTED") else 4
+        self.id = case_id or dt.datetime.now().strftime("TL-%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:n].upper()
         self.dir = (root or CASES_DIR) / self.id
         self.evidence_dir = self.dir / "evidence"
         self.artifacts_dir = self.dir / "artifacts"

@@ -35,6 +35,18 @@ HF_HUB_OFFLINE=1 .venv/bin/python app.py     # force offline (venue without Wi-F
 .venv/bin/python tests/test_core.py          # scoring / rule regression tests (no models needed)
 ```
 
+### Hosted demo (Hugging Face Space, free CPU)
+
+```bash
+.venv/bin/hf auth login                                        # once, with your own write token
+.venv/bin/python tools/deploy_hf_space.py <hf-username>        # create/update the Space; it rebuilds itself
+TRUTHLENS_PASSWORD=... .venv/bin/python tools/deploy_hf_space.py <hf-username>   # optional access password
+```
+
+The `Dockerfile` pins the tested package versions (CPU PyTorch) and bakes the models into the image.
+Hosted mode (`TRUTHLENS_HOSTED=1`) changes the privacy wording, shows each visitor only their own cases, and uses
+unguessable case IDs. Expect slower analysis than on Apple Silicon, and cases are wiped when the Space restarts.
+
 Requires Python 3.12+ and `ffmpeg`/`ffprobe`. Developed on a MacBook Air M4 (16 GB); uses Apple MPS when available.
 Each analysis writes `cases/TL-<time>-<id>/` with read-only evidence copies, artifacts, `report.json` and a
 self-contained `report.html` (print → PDF).
@@ -129,6 +141,7 @@ app.py                  FastAPI web app: upload, sample analysis, progress polli
 cli.py                  command-line analysis
 download_models.py      pre-download every model for offline use
 setup.sh                one-time setup
+Dockerfile              Hugging Face Space image (CPU PyTorch, pinned versions, models baked in)
 truthlens/
   pipeline.py           orchestrates ingest → analyze → correlate → score → verify → report
   evidence.py           Case (hashing, read-only copies, integrity re-check, analysis log) and Indicator
@@ -150,6 +163,7 @@ tools/
   make_test_assets.py   generate planted manipulations (spliced photo, joined video, edited voice note)
   make_hand_field.py    build hand_field.json from the public-domain "Creation of Adam" image
   run_demo_batch.sh     run every file in demo_samples/ and print verdicts
+  deploy_hf_space.py    create / update the Hugging Face Space
   test_audio_models.py  compare voice-deepfake models on known samples
 tests/test_core.py      regression tests for the scoring and plain-language rules
 test_assets/            planted test media (synthetic, safe to share)

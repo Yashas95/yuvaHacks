@@ -1,6 +1,14 @@
-"""TruthLens web app.  Run:  .venv/bin/python app.py   ->  http://localhost:8000"""
+"""TruthLens web app.  Run:  .venv/bin/python app.py   ->  http://localhost:8000
+
+Hosted mode (Hugging Face Space, see Dockerfile) is switched on by environment variables:
+  TRUTHLENS_HOSTED=1        honest "hosted" wording, visitors only see their own cases, unguessable case ids
+  TRUTHLENS_PASSWORD=...    optional: require this password before anything is shown (set as a Space secret)
+  PORT=7860                 listening port
+"""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import html
 import json
 import os
@@ -10,14 +18,54 @@ import threading
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from truthlens.config import CASES_DIR, ROOT
 from truthlens.evidence import Case, modality_of
 from truthlens.pipeline import run_case
 
 app = FastAPI(title="TruthLens")
+HOSTED = bool(os.environ.get("TRUTHLENS_HOSTED"))
+PASSWORD = os.environ.get("TRUTHLENS_PASSWORD", "")
+_TOKEN = hashlib.sha256(("truthlens:" + PASSWORD).encode()).hexdigest() if PASSWORD else ""
+
+
+@app.middleware("http")
+async def password_gate(request: Request, call_next):
+    """Optional shared password for the public demo (cookie set by /login)."""
+    if not PASSWORD or request.url.path in ("/login", "/favicon.ico") or \
+            hmac.compare_digest(request.cookies.get("tl_auth", ""), _TOKEN):
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        return HTMLResponse("Password required", status_code=401)
+    return RedirectResponse("/login")
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(error: int = 0):
+    return LOGIN.replace("__ERR__", "Wrong password — try again." if error else "")
+
+
+@app.post("/login")
+def login(request: Request, password: str = Form(default="")):
+    if not PASSWORD or not hmac.compare_digest(password, PASSWORD):
+        return RedirectResponse("/login?error=1", status_code=303)
+    r = RedirectResponse("/", status_code=303)
+    https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    # SameSite=None lets the cookie work inside the Hugging Face page iframe (needs HTTPS)
+    r.set_cookie("tl_auth", _TOKEN, httponly=True, secure=https, samesite="none" if https else "lax", max_age=7 * 86400)
+    return r
+
+
+LOGIN = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TruthLens — sign in</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f6f3;
+font:15px -apple-system,Inter,sans-serif;color:#0d0d0f}form{background:#fff;border:1px solid #dcdfe3;border-radius:10px;padding:28px;width:min(340px,90vw)}
+h1{font-size:22px;margin:0 0 4px}p{color:#6b7179;margin:0 0 16px;font-size:13px}input{width:100%;box-sizing:border-box;padding:11px 12px;
+border:1px solid #dcdfe3;border-radius:8px;font:inherit}button{margin-top:12px;width:100%;padding:11px;border:0;border-radius:8px;background:#0d0d0f;
+color:#fff;font:600 14px inherit;cursor:pointer}.e{color:#e5484d;font-size:13px;margin-top:10px}</style></head><body>
+<form method="post" action="/login"><h1>TruthLens</h1><p>Hackathon demo — enter the access password.</p>
+<input type="password" name="password" autofocus required aria-label="Password"><button>Enter</button><div class="e">__ERR__</div></form></body></html>"""
 JOBS: dict = {}
 LOCK = threading.Lock()  # one analysis at a time keeps the MacBook Air responsive
 
@@ -128,9 +176,13 @@ def report_json(case_id: str):
 
 
 @app.get("/api/cases")
-def cases():
+def cases(ids: str = ""):
     out = []
-    for d in sorted(CASES_DIR.glob("TL-*"), reverse=True)[:30]:
+    dirs = sorted(CASES_DIR.glob("TL-*"), reverse=True)
+    if HOSTED:   # a public server must not list other visitors' evidence: only cases this browser created
+        mine = {Path(x).name for x in ids.split(",") if x}
+        dirs = [d for d in dirs if d.name in mine]
+    for d in dirs[:30]:
         rp = d / "report.json"
         if rp.exists():
             try:
@@ -156,7 +208,20 @@ def home():
                f'<spline-viewer url="{html.escape(url)}" loading-anim-type="none"></spline-viewer>')
     else:
         tag = ""   # offline-safe default: the CSS blob + embossed rings
-    return INDEX.replace("__SPLINE__", tag).replace("__HANDS__", HANDS)
+    page = INDEX.replace("__SPLINE__", tag).replace("__HANDS__", HANDS)
+    if HOSTED:   # keep the privacy wording honest when not running on the user's own machine
+        for a, b in HOSTED_WORDING:
+            page = page.replace(a, b)
+    return page
+
+
+HOSTED_WORDING = [
+    ("Runs locally · nothing uploaded", "Hosted demo · no third-party APIs"),
+    ("<i>DATA UPLOADED</i><b>0 B</b><small>runs fully on this machine</small>",
+     "<i>THIRD-PARTY APIS</i><b>0</b><small>analysis runs on this server only</small>"),
+    ("Models run locally on Apple Silicon. Large videos can take a minute.",
+     "Running on a free shared CPU — videos can take a few minutes. Files are deleted when the server restarts."),
+]
 
 
 # The upload page lives in web/index.html; __SPLINE__ and __HANDS__ are filled in by home().
@@ -164,5 +229,6 @@ INDEX = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
 
 if __name__ == "__main__":
     import uvicorn
-    print("TruthLens running at http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    port = int(os.environ.get("PORT", "8000"))
+    print(f"TruthLens running at http://localhost:{port}")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

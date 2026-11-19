@@ -1,0 +1,14 @@
+# Exact versions TruthLens was tested with (2026-11-19). torch/torchvision are installed separately as CPU builds
+# in the Dockerfile; torchaudio is not needed (audio is decoded with ffmpeg).
+transformers==5.23.0
+huggingface_hub==2.4.0
+safetensors==0.8.0
+opencv-python-headless==5.1.0.95
+scipy==1.18.1
+numpy==2.5.5
+pillow==13.0.0
+matplotlib==3.11.2
+python-dateutil==4.0.0
+fastapi==0.165.0
+uvicorn==0.54.0
+python-multipart==0.0.34
