@@ -35,7 +35,13 @@ HF_HUB_OFFLINE=1 .venv/bin/python app.py     # force offline (venue without Wi-F
 .venv/bin/python tests/test_core.py          # scoring / rule regression tests (no models needed)
 ```
 
-### Hosted demo (Hugging Face Space, free CPU)
+### Hosted demo (GitHub Codespaces, free hours)
+
+On GitHub: **Code → Codespaces → Create codespace on main**. `.devcontainer/` builds the same image as the
+Space (`Dockerfile`) and starts TruthLens in hosted mode on port 7860. In the **Ports** tab, set port 7860 to
+**Public** to share the link. The first build takes ~10–15 min; later starts take a minute or two.
+
+### Hosted demo (Hugging Face Space)
 
 ```bash
 .venv/bin/hf auth login                                        # once, with your own write token

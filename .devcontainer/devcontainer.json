@@ -1,0 +1,17 @@
+{
+  // GitHub Codespaces: builds the same image as the Hugging Face Space (../Dockerfile: Python, ffmpeg,
+  // pinned packages, models baked in) and starts TruthLens in hosted mode on port 7860.
+  "name": "TruthLens",
+  "build": { "dockerfile": "../Dockerfile", "context": ".." },
+  "remoteUser": "user",
+  "hostRequirements": { "cpus": 2, "memory": "8gb" },
+  "forwardPorts": [7860],
+  "portsAttributes": {
+    "7860": { "label": "TruthLens", "onAutoForward": "notify" }
+  },
+  // Start the app from the checked-out repo (so pushed changes apply after a restart); log to /tmp/truthlens.log
+  "postStartCommand": "bash .devcontainer/start.sh",
+  "customizations": {
+    "codespaces": { "openFiles": ["README.md"] }
+  }
+}
