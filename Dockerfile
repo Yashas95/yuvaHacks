@@ -14,6 +14,8 @@ ENV HOME=/home/user \
     HF_HOME=/home/user/.cache/huggingface \
     PYTHONUNBUFFERED=1 \
     TOKENIZERS_PARALLELISM=false \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10 \
     TRUTHLENS_HOSTED=1 \
     PORT=7860
 WORKDIR /home/user/app
