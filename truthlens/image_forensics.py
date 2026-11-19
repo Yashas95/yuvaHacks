@@ -10,7 +10,7 @@ import numpy as np
 from PIL import ExifTags, Image, ImageOps
 
 from . import models
-from .config import RELIABILITY as R, VALIDATED_RELIABILITY
+from .config import RELIABILITY as R, UNRELIABLE_FACE_MODELS, VALIDATED_RELIABILITY
 from .evidence import Indicator
 from .provenance import indicators as provenance_indicators, scan as scan_provenance
 
@@ -460,8 +460,10 @@ def ml_indicators(rgb, ev, case, nid):
         _draw_boxes(bgr, boxes, (0, 165, 255))
         fpath = case.artifacts_dir / f"{ev.id}_faces.jpg"
         _save(bgr, fpath)
+        face_unreliable = models.STATUS.get("face_deepfake", {}).get("model") in UNRELIABLE_FACE_MODELS
+        metrics["face_model_unreliable"] = face_unreliable   # scores stay in metrics and on the face boxes
         for i, s in enumerate(fs):
-            if s["p_fake"] is not None and s["p_fake"] >= 0.5:
+            if s["p_fake"] is not None and s["p_fake"] >= 0.5 and not face_unreliable:
                 out.append(Indicator(nid(), ev.id, "image", "ml_face_deepfake", f"Face F{i + 1}: deepfake classifier",
                                      "synthetic", f"Face-swap/deepfake detector estimates {s['p_fake'] * 100:.0f}% for face F{i + 1}.",
                                      "Facial texture and blending statistics resemble face-swapped or synthesized faces.",

@@ -40,6 +40,7 @@ a screen capture of the frame, and the panel says that the metadata and audio ch
 .venv/bin/python cli.py photo.jpg clip.mp4 --context "claimed caption"   # command line, prints verdict + report path
 HF_HUB_OFFLINE=1 .venv/bin/python app.py     # force offline (venue without Wi-Fi)
 .venv/bin/python tests/test_core.py          # scoring / rule regression tests (no models needed)
+.venv/bin/python tools/regress.py check      # golden check: every verdict and finding unchanged after a refactor
 ```
 
 ### Hosted demo (GitHub Codespaces, free hours)
@@ -81,7 +82,7 @@ self-contained `report.html` (print → PDF).
 | **Pixel** | Error Level Analysis (texture-normalized, localized), sensor-noise inconsistency, SIFT copy-move, FFT periodic artifacts | signal processing |
 | **Temporal** | Full-frame scan for cuts/splices (ignoring recorder start/stop), duplicated or frozen frames, A/V length mismatch | signal processing |
 | **Audio signal** | Digital-silence gaps inside speech, background noise-floor jumps (splices), band-limited spectrum | signal processing |
-| **ML classifiers** | AI-image classifier on images and sampled frames, face deepfake classifier on detected faces (YuNet), synthetic-voice classifier per 4 s chunk | learned, *weakest* |
+| **ML classifiers** | AI-image classifier on images and sampled frames, face deepfake classifier on detected faces (YuNet; scores shown, not counted), synthetic-voice classifier (not run) | learned, *weakest* |
 | **Context** | Claim extraction (dates, entities, numbers), persuasion language, CLIP caption ↔ visual, Whisper caption ↔ speech (only for claims about speech) | cross-modal |
 | **Corroboration** | A video cut that coincides with a localized audio edit; same scene across files | cross-modal |
 
@@ -115,6 +116,8 @@ Full dated record with every number: **[docs/METHODOLOGY.md](docs/METHODOLOGY.md
 6. **A Gemini-generated song scored 40 %.** Its MP3 carried a Google-signed Content Credentials (C2PA) manifest saying
    “Created by Google Generative AI” that the audio path never read. `provenance.py` now decodes these manifests in
    images, video and audio → 92 % Strong.
+7. **The face-deepfake model scored a real selfie like the AI videos** (0.81 vs 0.80 / 0.88). It now stays visible
+   but isn't counted, like the voice model. The real selfie went 40 % → 20 %; the AI videos stay at 44 %.
 
 Every rule above is pinned by a test in [`tests/test_core.py`](tests/test_core.py).
 
@@ -122,8 +125,8 @@ Every rule above is pinned by a test in [`tests/test_core.py`](tests/test_core.p
 
 | File | Truth | TruthLens |
 |---|---|---|
-| WhatsApp selfie video | real | 40 % Inconclusive |
-| FaceTime screen capture | real | 44 % Inconclusive |
+| WhatsApp selfie video | real | 20 % Inconclusive |
+| FaceTime screen capture | real | 44 % Inconclusive (19 Nov; file no longer available to re-run) |
 | Veo 3 video via Instagram | AI | 44 % Inconclusive |
 | Wan avatar video | AI | 44 % Inconclusive |
 | AI try-on image | AI | **95 % Strong** (Google Content Credentials: generative AI) |
@@ -145,7 +148,7 @@ Small sample: treat as anecdotes; the evaluation tooling is in place to grow it.
 | Role | Model | Status |
 |---|---|---|
 | AI-image (images + frames) | `haywoodsloan/ai-image-detector-deploy` (fallback `Organika/sdxl-detector`) | used, not validated (AUC 0.62 on 2 real / 4 AI) |
-| Face deepfake | `prithivMLmods/Deep-Fake-Detector-v2-Model` | used, low reliability (did not separate real/AI on our videos) |
+| Face deepfake | `prithivMLmods/Deep-Fake-Detector-v2-Model` | **scores shown, not counted**: real selfie 0.81 vs AI videos 0.80 / 0.88 |
 | Synthetic voice | `MelodyMachine/Deepfake-audio-detection-V2` | **not run**: failed local evaluation |
 | Caption ↔ image | `openai/clip-vit-base-patch32` | used |
 | Speech-to-text | `openai/whisper-base` | used |
@@ -178,6 +181,7 @@ truthlens/
 web/index.html          landing / upload page
 tools/
   eval_detectors.py     measure which models separate real from AI files (AUC, FPR, TPR, saturation)
+  regress.py            golden check: record every verdict and finding, prove later changes didn't alter them
   make_test_assets.py   generate planted manipulations (spliced photo, joined video, edited voice note)
   make_hand_field.py    build hand_field.json from the public-domain "Creation of Adam" image
   run_demo_batch.sh     run every file in demo_samples/ and print verdicts
@@ -185,6 +189,7 @@ tools/
   test_audio_models.py  compare voice-deepfake models on known samples
 extension/              Chrome extension: check a post / reel in place (right-click or pick mode)
 tests/test_core.py      regression tests for the scoring and plain-language rules
+tests/golden.json       golden results for the synthetic test_assets/ (used by tools/regress.py)
 test_assets/            planted test media (synthetic, safe to share)
 docs/METHODOLOGY.md     dated evidence for every detection decision
 docs/ORIGINALITY.md     models + licenses, techniques we implemented, what we built

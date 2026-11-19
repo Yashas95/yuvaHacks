@@ -1,0 +1,83 @@
+{
+ "joined_clip.mp4": {
+  "band": "Strong indicators of manipulation",
+  "confidence": "High",
+  "indicators": [
+   [
+    "audio_bandwidth",
+    "manipulation",
+    0.45
+   ],
+   [
+    "audio_digital_silence",
+    "manipulation",
+    0.55
+   ],
+   [
+    "ml_image_ai",
+    "manipulation",
+    0.69
+   ],
+   [
+    "video_temporal",
+    "manipulation",
+    0.35
+   ],
+   [
+    "xmodal_corroboration",
+    "manipulation",
+    0.65
+   ]
+  ],
+  "likelihood": 74
+ },
+ "spliced_photo.jpg": {
+  "band": "Moderate indicators of manipulation",
+  "confidence": "High",
+  "indicators": [
+   [
+    "ela",
+    "manipulation",
+    1.0
+   ],
+   [
+    "metadata_missing",
+    "manipulation",
+    0.35
+   ],
+   [
+    "ml_image_ai",
+    "authenticity",
+    0.96
+   ],
+   [
+    "noise",
+    "manipulation",
+    1.0
+   ]
+  ],
+  "likelihood": 45
+ },
+ "voice_note.wav": {
+  "band": "Inconclusive \u2014 weak indicators",
+  "confidence": "Medium",
+  "indicators": [
+   [
+    "audio_bandwidth",
+    "manipulation",
+    0.45
+   ],
+   [
+    "audio_digital_silence",
+    "manipulation",
+    0.55
+   ],
+   [
+    "audio_splice",
+    "manipulation",
+    0.55
+   ]
+  ],
+  "likelihood": 32
+ }
+}

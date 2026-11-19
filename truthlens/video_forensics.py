@@ -12,8 +12,8 @@ from PIL import Image
 
 from . import models
 from .audio_forensics import analyze_audio
-from .config import RELIABILITY as R, VALIDATED_RELIABILITY, VIDEO_MAX_SAMPLED_FRAMES, VIDEO_TEMPORAL_MAX_FRAMES
-from .evidence import Indicator
+from .config import RELIABILITY as R, UNRELIABLE_FACE_MODELS, VALIDATED_RELIABILITY, VIDEO_MAX_SAMPLED_FRAMES, VIDEO_TEMPORAL_MAX_FRAMES
+from .evidence import Findings, Indicator
 from .provenance import indicators as provenance_indicators, scan as scan_provenance
 from .image_forensics import AI_SIGNATURES, EDITORS, _draw_boxes, detect_faces, ml_face_scores, ml_image_score
 from .media_io import has_audio, probe
@@ -145,10 +145,14 @@ def find_static_overlay(frames: dict):
     return best[1], best[2], crop
 
 
-def analyze_video(ev, case, nid) -> dict:
-    info = probe(ev.path)
-    inds, cmeta = container_indicators(ev, info, nid)
-    cap = cv2.VideoCapture(str(ev.path))
+# ---------------------------------------------------------------------------------------------------------
+# Checks. Each one records what it measured in `metrics` and adds findings to `out`.
+# ---------------------------------------------------------------------------------------------------------
+
+def scan_frames(path):
+    """Read the video once: frame-to-frame differences for every frame (up to VIDEO_TEMPORAL_MAX_FRAMES), and
+    a set of frames kept for the ML models (evenly spaced, plus frames right after a big jump)."""
+    cap = cv2.VideoCapture(str(path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -167,56 +171,61 @@ def analyze_video(ev, case, nid) -> dict:
             frames[i] = cv2.cvtColor(cv2.resize(fr, None, fx=s, fy=s) if s < 1 else fr, cv2.COLOR_BGR2RGB)
         i += 1
     cap.release()
-    n = len(diffs)
-    d = np.array(diffs)
-    times = np.arange(n) / fps
-    metrics = {"fps": round(fps, 2), "frames_scanned": n, "frames_total": total, "resolution": f"{W}x{H}",
-               "duration_s": round(n / fps, 2), **{k: v for k, v in cmeta.items() if k != "tags"}}
+    return fps, total, W, H, np.array(diffs), frames
 
-    # temporal discontinuities
+
+def check_cuts(out: Findings, metrics, d, fps) -> list[int]:
+    """Abrupt frame-to-frame changes (robust z-score), ignoring the first/last 0.25 s (recorder start/stop)."""
     cuts = []
-    if n > 10:
+    if len(d) > 10:
         med = np.median(d[1:]) + 1e-3
         mad = np.median(np.abs(d[1:] - med)) + 0.2
         z = (d - med) / (1.4826 * mad)
         cuts = [int(k) for k in np.where((z > 10) & (d > 4 * med) & (d > 6))[0] if k > 0]
-        # collapse neighbours
-        cuts = [c for j, c in enumerate(cuts) if j == 0 or c - cuts[j - 1] > fps * 0.3]
+        cuts = [c for j, c in enumerate(cuts) if j == 0 or c - cuts[j - 1] > fps * 0.3]   # collapse neighbours
         edge = fps * 0.25   # recorder start-up / stop and exposure settling are not edits
         cuts = [c for c in cuts if edge <= c <= len(d) - edge]
     metrics["discontinuities"] = [{"frame": c, "time": round(c / fps, 2)} for c in cuts]
     if cuts:
-        inds.append(Indicator(nid(), ev.id, "video", "video_temporal", "Abrupt temporal discontinuities", "splice",
-                              f"{len(cuts)} abrupt frame-to-frame change(s) at " + ", ".join(_fmt(c / fps) for c in cuts[:8]) + ".",
-                              "A sudden jump in picture content marks a cut. In footage presented as one continuous take, "
-                              "cuts indicate removed or inserted material.",
-                              min(1.0, 0.25 + 0.1 * len(cuts)), R["video_temporal"],
-                              {"type": "frames", "frames": [{"frame": c, "time": round(c / fps, 2)} for c in cuts[:20]]},
-                              ["Ordinary edited videos (news packages, reels) contain intentional cuts.",
-                               "Camera flashes and fast pans produce spikes."]))
-    # duplicated / frozen frames inside motion
-    if n > 30:
-        moving = np.convolve(d, np.ones(15) / 15, mode="same") > 1.5
-        dup = (d < 0.02) & moving
-        dup[0] = False
-        runs, start = [], None
-        for k, v in enumerate(np.append(dup, False)):
-            if v and start is None:
-                start = k
-            elif not v and start is not None:
-                runs.append((start, k)); start = None
-        long_runs = [r for r in runs if r[1] - r[0] >= 2]
-        metrics["frozen_runs"] = [{"from": round(a / fps, 2), "to": round(b / fps, 2)} for a, b in long_runs]
-        if len(long_runs) >= 1 or dup.sum() > max(5, 0.05 * n):
-            inds.append(Indicator(nid(), ev.id, "video", "video_duplicate_frames", "Duplicated / frozen frames during motion",
-                                  "splice", f"{int(dup.sum())} identical consecutive frames while the scene is moving"
-                                  + (f"; frozen runs at {', '.join(_fmt(a / fps) for a, _ in long_runs[:6])}." if long_runs else "."),
-                                  "Frame duplication inside motion can indicate frame-rate padding after removing or inserting frames.",
-                                  min(1.0, 0.3 + 0.1 * len(long_runs)), R["video_duplicate_frames"],
-                                  {"type": "frames", "frames": [{"frame": a, "time": round(a / fps, 2)} for a, _ in long_runs[:20]]},
-                                  ["Variable-frame-rate phone video and screen recordings duplicate frames normally."]))
+        out.add("video_temporal", "Abrupt temporal discontinuities", "splice",
+                f"{len(cuts)} abrupt frame-to-frame change(s) at " + ", ".join(_fmt(c / fps) for c in cuts[:8]) + ".",
+                "A sudden jump in picture content marks a cut. In footage presented as one continuous take, "
+                "cuts indicate removed or inserted material.",
+                min(1.0, 0.25 + 0.1 * len(cuts)), R["video_temporal"],
+                {"type": "frames", "frames": [{"frame": c, "time": round(c / fps, 2)} for c in cuts[:20]]},
+                ["Ordinary edited videos (news packages, reels) contain intentional cuts.",
+                 "Camera flashes and fast pans produce spikes."])
+    return cuts
 
-    # per-frame ML
+
+def check_frozen_frames(out: Findings, metrics, d, fps) -> None:
+    """Identical consecutive frames while the scene is moving (padding after removing/inserting frames)."""
+    n = len(d)
+    if n <= 30:
+        return
+    moving = np.convolve(d, np.ones(15) / 15, mode="same") > 1.5
+    dup = (d < 0.02) & moving
+    dup[0] = False
+    runs, start = [], None
+    for k, v in enumerate(np.append(dup, False)):
+        if v and start is None:
+            start = k
+        elif not v and start is not None:
+            runs.append((start, k)); start = None
+    long_runs = [r for r in runs if r[1] - r[0] >= 2]
+    metrics["frozen_runs"] = [{"from": round(a / fps, 2), "to": round(b / fps, 2)} for a, b in long_runs]
+    if len(long_runs) >= 1 or dup.sum() > max(5, 0.05 * n):
+        out.add("video_duplicate_frames", "Duplicated / frozen frames during motion",
+                "splice", f"{int(dup.sum())} identical consecutive frames while the scene is moving"
+                + (f"; frozen runs at {', '.join(_fmt(a / fps) for a, _ in long_runs[:6])}." if long_runs else "."),
+                "Frame duplication inside motion can indicate frame-rate padding after removing or inserting frames.",
+                min(1.0, 0.3 + 0.1 * len(long_runs)), R["video_duplicate_frames"],
+                {"type": "frames", "frames": [{"frame": a, "time": round(a / fps, 2)} for a, _ in long_runs[:20]]},
+                ["Variable-frame-rate phone video and screen recordings duplicate frames normally."])
+
+
+def score_frames(frames, fps) -> list[dict]:
+    """AI-image score for each kept frame, and deepfake scores for up to two faces in it."""
     rows = []
     for k in sorted(frames):
         rgb = frames[k]
@@ -226,85 +235,100 @@ def analyze_video(ev, case, nid) -> dict:
         fp = max([f["p_fake"] for f in fs if f["p_fake"] is not None], default=None)
         rows.append({"frame": k, "time": round(k / fps, 2), "p_ai": None if p is None else round(p, 3),
                      "faces": len(faces), "p_face_fake": fp, "face_boxes": fs})
-    metrics["frame_scores"] = [{k: v for k, v in r.items() if k != "face_boxes"} for r in rows]
-    metrics["image_ai_model"] = models.STATUS.get("image_ai", {}).get("model")
-    metrics["face_model"] = models.STATUS.get("face_deepfake", {}).get("model")
+    return rows
 
+
+def check_frame_ml(out: Findings, metrics, rows) -> list[dict]:
+    """AI-image classifier over time. Flags only a consistent signal (≥25 % of frames ≥0.6, or median ≥0.5),
+    never isolated spikes. Returns the flagged rows for the frame strip."""
     pa = [r["p_ai"] for r in rows if r["p_ai"] is not None]
-    pf = [r["p_face_fake"] for r in rows if r["p_face_fake"] is not None]
-    flagged_rows = []
     validated = models.image_ai_validated()
     rel_ai = VALIDATED_RELIABILITY if validated else R["ml_image_ai"]
     metrics["image_ai_validated"] = validated
-    if pa:
-        hi = [r for r in rows if r["p_ai"] is not None and r["p_ai"] >= 0.6]
-        frac = len(hi) / len(pa)
-        med = float(np.median(pa))
-        # a video counts as flagged only when the signal is consistent over time, not from isolated spikes
-        if hi and (frac >= 0.25 or med >= 0.5):
-            flagged_rows += hi
-            inds.append(Indicator(nid(), ev.id, "video", "ml_image_ai", "Frames resemble AI-generated imagery", "synthetic",
-                                  f"{len(hi)}/{len(pa)} sampled frames ({frac * 100:.0f}%) scored ≥60% synthetic "
-                                  f"(median {med * 100:.0f}%) by {metrics['image_ai_model']}"
-                                  + (" — a model validated on real vs AI samples." if validated else "."),
-                                  "Frame-level generator fingerprints, consistent across time, point to synthetic video.",
-                                  float(0.5 * med + 0.5 * max(pa)) * (0.6 + 0.4 * frac), rel_ai,
-                                  {"type": "frames", "frames": [{"frame": r["frame"], "time": r["time"], "p": r["p_ai"]} for r in hi[:20]]},
-                                  ["Image detectors are not trained on video compression; isolated spikes are weak evidence.",
-                                   "Heavy filters, CGI, animation and game footage can look 'generated' to a classifier."],
-                                  validated=validated))
-        elif med < 0.3:
-            inds.append(Indicator(nid(), ev.id, "video", "ml_image_ai", "Frame classifier: leans authentic", "synthetic",
-                                  f"Median synthetic probability {med * 100:.0f}% over {len(pa)} frames"
-                                  + (f" ({len(hi)} isolated frame spike(s) ignored)." if hi else "."),
-                                  "No consistent generator signature across frames.", 1 - med,
-                                  rel_ai * 0.5, {"type": "file"}, ["Not proof of authenticity; new generators can evade detectors."],
-                                  supports="authenticity", validated=validated))
-    if pf:
-        hi = [r for r in rows if r["p_face_fake"] is not None and r["p_face_fake"] >= 0.6]
-        if hi:
-            flagged_rows += [r for r in hi if r not in flagged_rows]
-            inds.append(Indicator(nid(), ev.id, "video", "ml_face_deepfake", "Face-swap / deepfake face detected", "synthetic",
-                                  f"Faces in {len(hi)}/{len(pf)} frames scored ≥60% deepfake (max {max(pf) * 100:.0f}%).",
-                                  "Face-region texture/blending statistics match face-swap or talking-head synthesis.",
-                                  float(0.5 * max(pf) + 0.5 * np.mean([r['p_face_fake'] for r in hi])), R["ml_face_deepfake"],
-                                  {"type": "frames", "frames": [{"frame": r["frame"], "time": r["time"], "p": r["p_face_fake"],
-                                                                 "boxes": [f["bbox"] for f in r["face_boxes"]]} for r in hi[:20]]},
-                                  ["Small faces, motion blur and beauty filters cause false positives."]))
+    if not pa:
+        return []
+    hi = [r for r in rows if r["p_ai"] is not None and r["p_ai"] >= 0.6]
+    frac = len(hi) / len(pa)
+    med = float(np.median(pa))
+    if hi and (frac >= 0.25 or med >= 0.5):
+        out.add("ml_image_ai", "Frames resemble AI-generated imagery", "synthetic",
+                f"{len(hi)}/{len(pa)} sampled frames ({frac * 100:.0f}%) scored ≥60% synthetic "
+                f"(median {med * 100:.0f}%) by {metrics['image_ai_model']}"
+                + (" — a model validated on real vs AI samples." if validated else "."),
+                "Frame-level generator fingerprints, consistent across time, point to synthetic video.",
+                float(0.5 * med + 0.5 * max(pa)) * (0.6 + 0.4 * frac), rel_ai,
+                {"type": "frames", "frames": [{"frame": r["frame"], "time": r["time"], "p": r["p_ai"]} for r in hi[:20]]},
+                ["Image detectors are not trained on video compression; isolated spikes are weak evidence.",
+                 "Heavy filters, CGI, animation and game footage can look 'generated' to a classifier."],
+                validated=validated)
+        return hi
+    if med < 0.3:
+        out.add("ml_image_ai", "Frame classifier: leans authentic", "synthetic",
+                f"Median synthetic probability {med * 100:.0f}% over {len(pa)} frames"
+                + (f" ({len(hi)} isolated frame spike(s) ignored)." if hi else "."),
+                "No consistent generator signature across frames.", 1 - med,
+                rel_ai * 0.5, {"type": "file"}, ["Not proof of authenticity; new generators can evade detectors."],
+                supports="authenticity", validated=validated)
+    return []
 
-    # visible watermark / logo overlay (provenance lead for a human to read)
-    visuals = {}
+
+def check_face_ml(out: Findings, metrics, rows) -> list[dict]:
+    """Face deepfake classifier: any frame whose face scores ≥0.6. Returns the flagged rows.
+    Skipped as evidence when the model is in config.UNRELIABLE_FACE_MODELS."""
+    pf = [r["p_face_fake"] for r in rows if r["p_face_fake"] is not None]
+    hi = [r for r in rows if r["p_face_fake"] is not None and r["p_face_fake"] >= 0.6]
+    if metrics.get("face_model") in UNRELIABLE_FACE_MODELS:
+        metrics["face_model_unreliable"] = True   # scores kept in metrics / frame strip, not counted
+        return []
+    if not hi:
+        return []
+    out.add("ml_face_deepfake", "Face-swap / deepfake face detected", "synthetic",
+            f"Faces in {len(hi)}/{len(pf)} frames scored ≥60% deepfake (max {max(pf) * 100:.0f}%).",
+            "Face-region texture/blending statistics match face-swap or talking-head synthesis.",
+            float(0.5 * max(pf) + 0.5 * np.mean([r['p_face_fake'] for r in hi])), R["ml_face_deepfake"],
+            {"type": "frames", "frames": [{"frame": r["frame"], "time": r["time"], "p": r["p_face_fake"],
+                                           "boxes": [f["bbox"] for f in r["face_boxes"]]} for r in hi[:20]]},
+            ["Small faces, motion blur and beauty filters cause false positives."])
+    return hi
+
+
+def check_overlay(out: Findings, metrics, case, ev, frames, visuals) -> None:
+    """Visible watermark / logo that stays fixed while the picture moves: a provenance lead for a human to read."""
     try:
         ov = find_static_overlay(frames)
     except Exception:
         ov = None
     metrics["overlay"] = None
-    if ov:
-        (X, Y, w, h), corner, crop = ov
-        metrics["overlay"] = {"bbox": [X, Y, w, h], "corner": corner}
-        big = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_RGB2BGR), None, fx=max(1, 240 // max(w, 1)), fy=max(1, 240 // max(w, 1)),
-                         interpolation=cv2.INTER_NEAREST)
-        op = case.artifacts_dir / f"{ev.id}_overlay.png"
-        cv2.imwrite(str(op), big)
-        visuals["Corner overlay (zoomed) — read it"] = case.rel(op)
-        inds.append(Indicator(nid(), ev.id, "video", "video_watermark", "Static logo / watermark in corner", "metadata",
-                              f"A fixed overlay sits in the {corner} corner (x={X}, y={Y}, {w}×{h}px in sampled frames) "
-                              "for the whole video while the picture around it moves.",
-                              "AI video tools such as Gemini/Veo, Kling, Hailuo and Meta AI stamp a visible mark in a corner. "
-                              "If the zoomed overlay names an AI tool, that is strong provenance evidence; a human must read it.",
-                              0.4, R["video_watermark"],
-                              {"type": "regions", "regions": [{"label": f"overlay ({corner})", "bbox": [X, Y, w, h]}]},
-                              ["TV channel logos, app watermarks (TikTok, CapCut, Instagram) and static captions look the same.",
-                               "Generator watermarks are often cropped or blurred out before sharing, so absence proves nothing."]))
+    if not ov:
+        return
+    (X, Y, w, h), corner, crop = ov
+    metrics["overlay"] = {"bbox": [X, Y, w, h], "corner": corner}
+    big = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_RGB2BGR), None, fx=max(1, 240 // max(w, 1)), fy=max(1, 240 // max(w, 1)),
+                     interpolation=cv2.INTER_NEAREST)
+    op = case.artifacts_dir / f"{ev.id}_overlay.png"
+    cv2.imwrite(str(op), big)
+    visuals["Corner overlay (zoomed) — read it"] = case.rel(op)
+    out.add("video_watermark", "Static logo / watermark in corner", "metadata",
+            f"A fixed overlay sits in the {corner} corner (x={X}, y={Y}, {w}×{h}px in sampled frames) "
+            "for the whole video while the picture around it moves.",
+            "AI video tools such as Gemini/Veo, Kling, Hailuo and Meta AI stamp a visible mark in a corner. "
+            "If the zoomed overlay names an AI tool, that is strong provenance evidence; a human must read it.",
+            0.4, R["video_watermark"],
+            {"type": "regions", "regions": [{"label": f"overlay ({corner})", "bbox": [X, Y, w, h]}]},
+            ["TV channel logos, app watermarks (TikTok, CapCut, Instagram) and static captions look the same.",
+             "Generator watermarks are often cropped or blurred out before sharing, so absence proves nothing."])
 
-    # visuals: timeline + flagged frame strip
-    tl = case.artifacts_dir / f"{ev.id}_timeline.png"
+
+def draw_timeline(path, title, d, fps, cuts, rows) -> None:
+    times = np.arange(len(d)) / fps
+    pa = [r["p_ai"] for r in rows if r["p_ai"] is not None]
+    pf = [r["p_face_fake"] for r in rows if r["p_face_fake"] is not None]
     fig, ax = plt.subplots(2, 1, figsize=(11, 4.4), sharex=True, gridspec_kw={"height_ratios": [1, 1.3]})
     ax[0].plot(times, d, lw=0.8, color="#334")
     for c in cuts:
         ax[0].axvline(c / fps, color="#ff8a00", lw=1.5)
     ax[0].set_ylabel("frame Δ")
-    ax[0].set_title(f"{ev.name} — temporal consistency (orange = discontinuity) and per-frame detector scores", fontsize=10)
+    ax[0].set_title(title, fontsize=10)
     if pa:
         ax[1].plot([r["time"] for r in rows if r["p_ai"] is not None], pa, "o-", ms=3, label="AI-generated (frame)", color="#1c64f2")
     if pf:
@@ -316,10 +340,12 @@ def analyze_video(ev, case, nid) -> dict:
     if pa or pf:
         ax[1].legend(fontsize=8, loc="upper right")
     fig.tight_layout()
-    fig.savefig(tl, dpi=110)
+    fig.savefig(path, dpi=110)
     plt.close(fig)
-    visuals["Temporal timeline"] = case.rel(tl)
 
+
+def draw_frame_strip(path, frames, rows, flagged_rows, cuts, fps) -> bool:
+    """Flagged frames (or evenly spaced ones) with face boxes and scores, plus up to three cut frames."""
     show = flagged_rows[:6] or [r for r in rows][:: max(1, len(rows) // 6)][:6]
     cut_frames = [c for c in cuts if c in frames][:3]
     tiles = []
@@ -327,41 +353,76 @@ def analyze_video(ev, case, nid) -> dict:
         bgr = cv2.cvtColor(frames[r["frame"]], cv2.COLOR_RGB2BGR).copy()
         _draw_boxes(bgr, [{"bbox": f["bbox"], "label": "" if f["p_fake"] is None else f"{f['p_fake'] * 100:.0f}%"} for f in r["face_boxes"]], (0, 0, 255))
         ai_txt = "" if r["p_ai"] is None else "{:.0f}%".format(r["p_ai"] * 100)
-        lab = f"{_fmt(r['time'])}  AI {ai_txt}"
         cv2.rectangle(bgr, (0, 0), (bgr.shape[1], 28), (0, 0, 0), -1)
-        cv2.putText(bgr, lab, (6, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        cv2.putText(bgr, f"{_fmt(r['time'])}  AI {ai_txt}", (6, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         tiles.append(bgr)
     for c in cut_frames:
         bgr = cv2.cvtColor(frames[c], cv2.COLOR_RGB2BGR).copy()
         cv2.rectangle(bgr, (0, 0), (bgr.shape[1], 28), (0, 120, 255), -1)
         cv2.putText(bgr, f"{_fmt(c / fps)}  DISCONTINUITY", (6, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         tiles.append(bgr)
-    if tiles:
-        th = 240
-        tiles = [cv2.resize(t, (int(t.shape[1] * th / t.shape[0]), th)) for t in tiles]
-        rows_img, row, wsum = [], [], 0
-        for t in tiles:
-            if wsum + t.shape[1] > 1400 and row:
-                rows_img.append(row); row, wsum = [], 0
-            row.append(t); wsum += t.shape[1]
-        rows_img.append(row)
-        maxw = max(sum(t.shape[1] for t in r) for r in rows_img)
-        canvas = np.full((th * len(rows_img), maxw, 3), 255, np.uint8)
-        for ri, r in enumerate(rows_img):
-            x = 0
-            for t in r:
-                canvas[ri * th:(ri + 1) * th, x:x + t.shape[1]] = t
-                x += t.shape[1]
-        strip = case.artifacts_dir / f"{ev.id}_frames.jpg"
-        cv2.imwrite(str(strip), canvas, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not tiles:
+        return False
+    th = 240
+    tiles = [cv2.resize(t, (int(t.shape[1] * th / t.shape[0]), th)) for t in tiles]
+    rows_img, row, wsum = [], [], 0
+    for t in tiles:
+        if wsum + t.shape[1] > 1400 and row:
+            rows_img.append(row); row, wsum = [], 0
+        row.append(t); wsum += t.shape[1]
+    rows_img.append(row)
+    maxw = max(sum(t.shape[1] for t in r) for r in rows_img)
+    canvas = np.full((th * len(rows_img), maxw, 3), 255, np.uint8)
+    for ri, r in enumerate(rows_img):
+        x = 0
+        for t in r:
+            canvas[ri * th:(ri + 1) * th, x:x + t.shape[1]] = t
+            x += t.shape[1]
+    cv2.imwrite(str(path), canvas, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return True
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------------------------------------
+
+def analyze_video(ev, case, nid) -> dict:
+    """Container/provenance tags, temporal cuts and frozen frames, per-frame AI and face models, corner
+    watermark, then the audio track through audio_forensics. Returns indicators, visuals and metrics."""
+    info = probe(ev.path)
+    inds, cmeta = container_indicators(ev, info, nid)
+    out = Findings(ev, nid, "video")
+    out += inds
+    fps, total, W, H, d, frames = scan_frames(ev.path)
+    n = len(d)
+    metrics = {"fps": round(fps, 2), "frames_scanned": n, "frames_total": total, "resolution": f"{W}x{H}",
+               "duration_s": round(n / fps, 2), **{k: v for k, v in cmeta.items() if k != "tags"}}
+
+    cuts = check_cuts(out, metrics, d, fps)
+    check_frozen_frames(out, metrics, d, fps)
+
+    rows = score_frames(frames, fps)
+    metrics["frame_scores"] = [{k: v for k, v in r.items() if k != "face_boxes"} for r in rows]
+    metrics["image_ai_model"] = models.STATUS.get("image_ai", {}).get("model")
+    metrics["face_model"] = models.STATUS.get("face_deepfake", {}).get("model")
+    flagged_rows = check_frame_ml(out, metrics, rows)
+    flagged_rows += [r for r in check_face_ml(out, metrics, rows) if r not in flagged_rows]
+
+    visuals = {}
+    check_overlay(out, metrics, case, ev, frames, visuals)
+    tl = case.artifacts_dir / f"{ev.id}_timeline.png"
+    draw_timeline(tl, f"{ev.name} — temporal consistency (orange = discontinuity) and per-frame detector scores", d, fps, cuts, rows)
+    visuals["Temporal timeline"] = case.rel(tl)
+    strip = case.artifacts_dir / f"{ev.id}_frames.jpg"
+    if draw_frame_strip(strip, frames, rows, flagged_rows, cuts, fps):
         visuals["Flagged / key frames"] = case.rel(strip)
 
     transcript, audio_metrics = {"text": "", "chunks": []}, {}
     if has_audio(info):
         ar = analyze_audio(ev, case, nid, source_path=ev.path, label="audio track")
-        inds += ar["indicators"]
+        out += ar["indicators"]
         visuals.update(ar["visuals"])
         transcript, audio_metrics = ar["transcript"], ar["metrics"]
     metrics["audio"] = audio_metrics
-    return {"indicators": inds, "visuals": visuals, "metrics": metrics, "metadata": cmeta,
+    return {"indicators": list(out), "visuals": visuals, "metrics": metrics, "metadata": cmeta,
             "transcript": transcript, "keyframes": {k: frames[k] for k in list(sorted(frames))[:: max(1, len(frames) // 8)]}}

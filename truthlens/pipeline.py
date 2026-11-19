@@ -64,7 +64,8 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
                 families |= {"video_metadata", "video_temporal", "video_duplicate_frames"}
                 if any(f.get("p_ai") is not None for f in r["metrics"].get("frame_scores", [])):
                     families.add("ml_image_ai")
-                if any(f.get("p_face_fake") is not None for f in r["metrics"].get("frame_scores", [])):
+                if any(f.get("p_face_fake") is not None for f in r["metrics"].get("frame_scores", [])) \
+                        and not r["metrics"].get("face_model_unreliable"):
                     families.add("ml_face_deepfake")
                 if r["metrics"]["audio"]:
                     families |= {"audio_splice", "audio_digital_silence", "audio_bandwidth"}
@@ -132,6 +133,14 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
         limitations.insert(0, f"Synthetic-voice classifier {mid} failed local evaluation ({UNRELIABLE_AUDIO_MODELS.get(mid, '')}), "
                               "so it is not run. AI-generated voices cannot currently be ruled out by ear-level analysis; "
                               "file labels (C2PA) and signal checks still run.")
+    from .config import UNRELIABLE_FACE_MODELS
+    def _face_off(r):
+        m = r.get("metrics") or {}
+        return m.get("face_model_unreliable") or (m.get("ml") or {}).get("face_model_unreliable")
+    if any(_face_off(r) for r in results.values()):
+        fid = models.STATUS.get("face_deepfake", {}).get("model") or next(iter(UNRELIABLE_FACE_MODELS))
+        limitations.insert(0, f"Face-deepfake classifier {fid} did not separate real from AI faces in our evaluation "
+                              f"({UNRELIABLE_FACE_MODELS.get(fid, '')}); its scores are shown but not counted.")
     for r in results.values():
         tr = r.get("transcript") or {}
         if tr.get("truncated_at_s"):

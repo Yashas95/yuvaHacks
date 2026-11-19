@@ -81,6 +81,14 @@ UNRELIABLE_AUDIO_MODELS = {
     "mo-thecreator/Deepfake-audio-detection": "2026-11-19: scored both a TTS voice and real voices as fake.",
 }
 
+# Face-deepfake models that did not separate real from AI on our labelled files: their scores stay in the
+# report's metrics and frame strip, but never become findings (same policy as UNRELIABLE_AUDIO_MODELS).
+UNRELIABLE_FACE_MODELS = {
+    "prithivMLmods/Deep-Fake-Detector-v2-Model": "2026-11-20: scored the real WhatsApp selfie 0.81 and the Veo 3 / Wan "
+                                                 "AI videos 0.80 / 0.88 (on 2026-11-19: real 0.655 vs Veo 0.662), so it "
+                                                 "does not tell real faces from AI ones on our files.",
+}
+
 VIDEO_MAX_SAMPLED_FRAMES = 32     # frames sent to ML models
 VIDEO_TEMPORAL_MAX_FRAMES = 3000  # frames scanned for temporal checks
 AUDIO_CHUNK_SECONDS = 4.0

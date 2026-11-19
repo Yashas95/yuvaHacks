@@ -69,6 +69,20 @@ class Indicator:
         return d
 
 
+class Findings(list):
+    """Indicators for one evidence item. Checks call `add(detector, title, ...)` instead of repeating the
+    id / evidence / modality arguments; the order of `add` calls keeps indicator ids stable."""
+
+    def __init__(self, ev, nid, modality: str):
+        super().__init__()
+        self.ev, self.nid, self.modality = ev, nid, modality
+
+    def add(self, *args, **kwargs) -> Indicator:
+        ind = Indicator(self.nid(), self.ev.id, self.modality, *args, **kwargs)
+        self.append(ind)
+        return ind
+
+
 @dataclass
 class Evidence:
     id: str

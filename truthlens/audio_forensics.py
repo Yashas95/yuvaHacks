@@ -9,7 +9,7 @@ from scipy import signal
 
 from . import models
 from .config import ASR_MAX_SECONDS, AUDIO_CHUNK_SECONDS, MODELS, RELIABILITY as R, UNRELIABLE_AUDIO_MODELS
-from .evidence import Indicator
+from .evidence import Findings, Indicator
 from .media_io import load_audio, probe
 from .provenance import indicators as provenance_indicators, scan as scan_provenance
 
@@ -80,48 +80,30 @@ def transcribe(y16: np.ndarray) -> dict:
     return {"text": "", "chunks": [], "available": True, "error": err}
 
 
-def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0, step=None) -> dict:
-    step = step or (lambda frac, msg: None)   # progress inside this file: frac 0..1
-    path = source_path or ev.path
-    step(0.05, "Reading the file and its AI labels (C2PA)")
-    info = probe(path)
-    a = next((s for s in info.get("streams", []) if s.get("codec_type") == "audio"), {})
-    y, sr = load_audio(path)
-    y16, _ = load_audio(path, sr=16000)
-    dur = len(y16) / 16000 if len(y16) else 0.0
-    metrics = {"duration_s": round(dur, 2), "sample_rate": sr, "codec": a.get("codec_name"),
-               "bit_rate": a.get("bit_rate") or info.get("format", {}).get("bit_rate"),
-               "encoder": (info.get("format", {}).get("tags", {}) or {}).get("encoder")}
-    inds, marks = [], []
-    meta = {}
-    if source_path is None:   # a standalone audio file (a video's own track is covered by video_forensics)
-        prov = scan_provenance(ev.path)
-        metrics["provenance"] = prov
-        inds += provenance_indicators(ev, prov, nid, label, R)
-        meta = {"c2pa_present": prov["c2pa_present"], "provenance": prov,
-                "ai_signatures": ["C2PA digitalSourceType: " + t for t in prov["ai_source_types"]]}
-    step(0.2, "Signal checks: silence gaps, noise floor, band limit")
+# ---------------------------------------------------------------------------------------------------------
+# Checks. Each one reads the decoded audio, records what it measured in `metrics`, and adds findings to `out`.
+# `marks` collects (kind, start, end) spans that the spectrogram shades.
+# ---------------------------------------------------------------------------------------------------------
+
+def check_sample_rate(out: Findings, sr) -> None:
+    """Provenance lead: 22.05 / 24 kHz is the native output rate of many TTS engines."""
     try:
         sr_i = int(sr or 0)
     except (TypeError, ValueError):
         sr_i = 0
     if sr_i in (22050, 24000):
-        inds.append(Indicator(nid(), ev.id, label, "audio_format", "Stored at a text-to-speech sample rate", "synthetic",
-                              f"Audio is stored at {sr_i} Hz. Many TTS / voice-cloning engines output this natively (e.g. OpenAI TTS and "
-                              "Coqui XTTS at 24 kHz, Piper at 22.05 kHz), while phone and camera recordings are usually 44.1 or 48 kHz.",
-                              "A TTS-native sample rate is a provenance lead that the voice may have been generated, not recorded.",
-                              0.5, R["audio_format"], {"type": "file"},
-                              ["Some apps, downloaders and podcast exports resample audio to 22/24 kHz.",
-                               "Recorded speech can be converted to any sample rate, so this is a lead, not proof."]))
-    if dur < 0.5:
-        return {"indicators": inds, "visuals": {}, "metrics": metrics, "metadata": meta, "transcript": {"text": "", "chunks": []}}
+        out.add("audio_format", "Stored at a text-to-speech sample rate", "synthetic",
+                f"Audio is stored at {sr_i} Hz. Many TTS / voice-cloning engines output this natively (e.g. OpenAI TTS and "
+                "Coqui XTTS at 24 kHz, Piper at 22.05 kHz), while phone and camera recordings are usually 44.1 or 48 kHz.",
+                "A TTS-native sample rate is a provenance lead that the voice may have been generated, not recorded.",
+                0.5, R["audio_format"], {"type": "file"},
+                ["Some apps, downloaders and podcast exports resample audio to 22/24 kHz.",
+                 "Recorded speech can be converted to any sample rate, so this is a lead, not proof."])
 
-    db, hop, peak = _frames_db(y16, 16000)
+
+def check_digital_silence(out: Findings, metrics, marks, db, peak, speech, hop, t_offset) -> None:
+    """Exact-zero gaps inside the recording: real microphones always have a noise floor."""
     t_of = lambda i: i * hop / 16000
-    speech = db > (np.percentile(db, 90) - 25)
-    metrics["speech_ratio"] = round(float(speech.mean()), 3)
-
-    # 1) Digital silence: exact-zero gaps inside the recording (real microphones always have a noise floor)
     zero = peak < 1e-4
     inner = np.zeros_like(zero)
     sp_idx = np.where(speech)[0]
@@ -131,20 +113,23 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0, 
     metrics["digital_silence_gaps"] = len(zruns)
     if zruns:
         tot = sum(e - s for s, e in zruns)
-        inds.append(Indicator(nid(), ev.id, label, "audio_digital_silence", "Digital-silence gaps inside speech", "splice",
-                              f"{len(zruns)} gap(s) of absolute digital silence ({tot:.2f}s total) between speech.",
-                              "A live microphone recording always carries background noise. Perfectly silent gaps appear when "
-                              "clips are joined in an editor or when speech is synthesized segment by segment.",
-                              min(1.0, 0.45 + 0.1 * len(zruns)), R["audio_digital_silence"],
-                              {"type": "segments", "segments": [[round(s + t_offset, 2), round(e + t_offset, 2)] for s, e in zruns[:12]]},
-                              ["Noise gates / noise suppression (Zoom, Krisp, phone calls) produce digital silence legitimately."]))
+        out.add("audio_digital_silence", "Digital-silence gaps inside speech", "splice",
+                f"{len(zruns)} gap(s) of absolute digital silence ({tot:.2f}s total) between speech.",
+                "A live microphone recording always carries background noise. Perfectly silent gaps appear when "
+                "clips are joined in an editor or when speech is synthesized segment by segment.",
+                min(1.0, 0.45 + 0.1 * len(zruns)), R["audio_digital_silence"],
+                {"type": "segments", "segments": [[round(s + t_offset, 2), round(e + t_offset, 2)] for s, e in zruns[:12]]},
+                ["Noise gates / noise suppression (Zoom, Krisp, phone calls) produce digital silence legitimately."])
         marks += [("silence", s, e) for s, e in zruns]
 
-    # 2) Background-noise-floor jumps (possible splice points)
+
+def check_noise_floor(out: Findings, metrics, marks, db, peak, hop, t_offset) -> None:
+    """Background-noise-floor jumps: one continuous recording keeps a stable room tone."""
+    t_of = lambda i: i * hop / 16000
     win, hopw = 250, 50  # 2.5 s windows, 0.5 s hop -> each window normally contains a pause
     floors, times = [], []
     for i in range(0, max(0, len(db) - win), hopw):
-        seg = db[i:i + win][peak[i:i + win] >= 1e-4]   # ignore digital silence (handled above)
+        seg = db[i:i + win][peak[i:i + win] >= 1e-4]   # ignore digital silence (its own check)
         floors.append(np.percentile(seg, 5) if len(seg) > 20 else np.nan)
         times.append(t_of(i + win // 2))
     floors = np.array(floors)
@@ -171,17 +156,19 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0, 
                     splices.append((round(t_change, 2), round(jump, 1)))
     metrics["noise_floor_jumps"] = len(splices)
     if splices:
-        inds.append(Indicator(nid(), ev.id, label, "audio_splice", "Abrupt background-noise changes", "splice",
-                              f"{len(splices)} point(s) where the background noise level jumps by >10 dB: "
-                              + ", ".join(f"{t + t_offset:.1f}s ({j:+.0f} dB)" for t, j in splices[:6]) + ".",
-                              "The room tone of a single continuous recording is stable. A sudden change suggests audio from "
-                              "different recordings was joined at that moment.",
-                              min(1.0, 0.4 + 0.15 * len(splices)), R["audio_splice"],
-                              {"type": "points", "times": [round(t + t_offset, 2) for t, _ in splices[:12]]},
-                              ["Moving between rooms, a door/AC switching on, or the mic being moved also changes background noise."]))
+        out.add("audio_splice", "Abrupt background-noise changes", "splice",
+                f"{len(splices)} point(s) where the background noise level jumps by >10 dB: "
+                + ", ".join(f"{t + t_offset:.1f}s ({j:+.0f} dB)" for t, j in splices[:6]) + ".",
+                "The room tone of a single continuous recording is stable. A sudden change suggests audio from "
+                "different recordings was joined at that moment.",
+                min(1.0, 0.4 + 0.15 * len(splices)), R["audio_splice"],
+                {"type": "points", "times": [round(t + t_offset, 2) for t, _ in splices[:12]]},
+                ["Moving between rooms, a door/AC switching on, or the mic being moved also changes background noise."])
         marks += [("splice", t, t) for t, _ in splices]
 
-    # 3) Bandwidth
+
+def check_bandwidth(out: Findings, metrics, y, sr) -> None:
+    """Sharp spectral ceiling well below Nyquist: generated at a low rate, then up-sampled (or a phone codec)."""
     f, psd = signal.welch(y, sr, nperseg=4096)
     pdb = 10 * np.log10(psd + 1e-20)
     pdb_s = np.convolve(pdb, np.ones(9) / 9, mode="same")
@@ -195,24 +182,25 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0, 
     metrics["effective_bandwidth_hz"] = int(cutoff)
     metrics["sharp_cutoff"] = bool(sharp)
     if sr >= 32000 and sharp and cutoff < 0.6 * (sr / 2) and any(lo <= cutoff <= hi for lo, hi in [(7000, 8800), (10000, 11600), (11600, 12600)]):
-        inds.append(Indicator(nid(), ev.id, label, "audio_bandwidth", "Band-limited audio", "synthetic",
-                              f"Energy stops sharply at ~{cutoff / 1000:.1f} kHz although the file is sampled at {sr / 1000:.1f} kHz.",
-                              "Many TTS / voice-cloning vocoders generate audio at 16–24 kHz and are later up-sampled, "
-                              "leaving an empty band above the original Nyquist frequency.",
-                              0.45, R["audio_bandwidth"], {"type": "file"},
-                              ["Phone calls, WhatsApp voice notes and low-bitrate MP3/AAC are band-limited too."]))
+        out.add("audio_bandwidth", "Band-limited audio", "synthetic",
+                f"Energy stops sharply at ~{cutoff / 1000:.1f} kHz although the file is sampled at {sr / 1000:.1f} kHz.",
+                "Many TTS / voice-cloning vocoders generate audio at 16–24 kHz and are later up-sampled, "
+                "leaving an empty band above the original Nyquist frequency.",
+                0.45, R["audio_bandwidth"], {"type": "file"},
+                ["Phone calls, WhatsApp voice notes and low-bitrate MP3/AAC are band-limited too."])
 
-    # 4) Synthetic speech classifier, per chunk.
-    # Every candidate we have failed local evaluation (config.UNRELIABLE_AUDIO_MODELS), so it is not run at all:
-    # its scores were ignored anyway, and on the hosted CPU it cost minutes per song.
-    cands = [m for m in MODELS["audio_deepfake"]]
+
+def check_voice_model(out: Findings, metrics, marks, y16, speech, hop, t_offset, step) -> None:
+    """Synthetic-speech classifier per 4 s chunk of speech. Models that failed our evaluation
+    (config.UNRELIABLE_AUDIO_MODELS) are not run: their scores were ignored anyway and cost minutes on a CPU."""
+    cands = list(MODELS["audio_deepfake"])
     if cands and all(m in UNRELIABLE_AUDIO_MODELS for m in cands):
-        pipe = None
         metrics["audio_model"], metrics["audio_model_unreliable"] = cands[0], True
-    else:
-        step(0.35, "Synthetic-voice classifier")
-        pipe = models.audio_deepfake()
-        metrics["audio_model"] = models.STATUS.get("audio_deepfake", {}).get("model")
+        metrics["segment_scores"] = []
+        return
+    step(0.35, "Synthetic-voice classifier")
+    pipe = models.audio_deepfake()
+    metrics["audio_model"] = models.STATUS.get("audio_deepfake", {}).get("model")
     seg_scores = []
     if pipe is not None:
         n = int(AUDIO_CHUNK_SECONDS * 16000)
@@ -230,50 +218,53 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0, 
             if p is not None:
                 seg_scores.append((s / 16000, (s + len(chunk)) / 16000, round(p, 3)))
     metrics["segment_scores"] = [[round(a + t_offset, 2), round(b + t_offset, 2), p] for a, b, p in seg_scores]
-    if seg_scores:
-        ps = np.array([p for *_, p in seg_scores])
-        metrics["synthetic_mean_p"] = round(float(ps.mean()), 3)
-        flagged = _merge([(a, b, p) for a, b, p in seg_scores if p >= 0.6])
-        unreliable = metrics.get("audio_model") in UNRELIABLE_AUDIO_MODELS
-        metrics["audio_model_unreliable"] = unreliable
-        if unreliable:
-            pass   # failed local evaluation: keep its scores in the metrics, but never turn them into findings
-        elif flagged:
-            mx = max(p for *_, p in flagged)
-            inds.append(Indicator(nid(), ev.id, label, "audio_ml", "Synthetic / cloned speech classifier", "synthetic",
-                                  f"{len(flagged)} segment(s) scored as synthetic (max {mx * 100:.0f}%, mean over all speech "
-                                  f"{ps.mean() * 100:.0f}%) by {metrics['audio_model']}.",
-                                  "The learned acoustic fingerprint of these segments resembles TTS / voice-conversion output.",
-                                  float(0.6 * mx + 0.4 * ps.mean()), R["audio_ml"],
-                                  {"type": "segments", "segments": [[round(a + t_offset, 2), round(b + t_offset, 2), p] for a, b, p in flagged]},
-                                  ["Classifiers trained on public datasets generalize poorly to new voice-cloning tools and noisy audio.",
-                                   "Heavy compression, music or overlapping speakers can produce false positives."]))
-            marks += [("ml", a, b) for a, b, _ in flagged]
-        elif ps.mean() < 0.35:
-            inds.append(Indicator(nid(), ev.id, label, "audio_ml", "Speech classifier: leans natural", "synthetic",
-                                  f"Mean synthetic probability {ps.mean() * 100:.0f}% across {len(ps)} speech segments.",
-                                  "No strong synthetic-speech signature.", 1 - float(ps.mean()), R["audio_ml"] * 0.6,
-                                  {"type": "file"}, ["High-quality modern voice clones can evade detection."], supports="authenticity"))
+    if not seg_scores:
+        return
+    ps = np.array([p for *_, p in seg_scores])
+    metrics["synthetic_mean_p"] = round(float(ps.mean()), 3)
+    flagged = _merge([(a, b, p) for a, b, p in seg_scores if p >= 0.6])
+    unreliable = metrics.get("audio_model") in UNRELIABLE_AUDIO_MODELS
+    metrics["audio_model_unreliable"] = unreliable
+    if unreliable:
+        return   # failed local evaluation: keep its scores in the metrics, never turn them into findings
+    if flagged:
+        mx = max(p for *_, p in flagged)
+        out.add("audio_ml", "Synthetic / cloned speech classifier", "synthetic",
+                f"{len(flagged)} segment(s) scored as synthetic (max {mx * 100:.0f}%, mean over all speech "
+                f"{ps.mean() * 100:.0f}%) by {metrics['audio_model']}.",
+                "The learned acoustic fingerprint of these segments resembles TTS / voice-conversion output.",
+                float(0.6 * mx + 0.4 * ps.mean()), R["audio_ml"],
+                {"type": "segments", "segments": [[round(a + t_offset, 2), round(b + t_offset, 2), p] for a, b, p in flagged]},
+                ["Classifiers trained on public datasets generalize poorly to new voice-cloning tools and noisy audio.",
+                 "Heavy compression, music or overlapping speakers can produce false positives."])
+        marks += [("ml", a, b) for a, b, _ in flagged]
+    elif ps.mean() < 0.35:
+        out.add("audio_ml", "Speech classifier: leans natural", "synthetic",
+                f"Mean synthetic probability {ps.mean() * 100:.0f}% across {len(ps)} speech segments.",
+                "No strong synthetic-speech signature.", 1 - float(ps.mean()), R["audio_ml"] * 0.6,
+                {"type": "file"}, ["High-quality modern voice clones can evade detection."], supports="authenticity")
 
-    step(0.6, "Transcribing speech (Whisper)")
+
+def transcript_for(y16, t_offset) -> dict:
+    """Whisper on the first ASR_MAX_SECONDS (enough for caption-vs-speech checks; long music took minutes on CPU)."""
     asr_n = int(ASR_MAX_SECONDS * 16000)
     tr = transcribe(y16[:asr_n])
     if len(y16) > asr_n:
         tr["truncated_at_s"] = ASR_MAX_SECONDS
-    step(0.9, "Drawing the spectrogram")
     if t_offset:
         for c in tr["chunks"]:
             c["start"] = None if c["start"] is None else c["start"] + t_offset
             c["end"] = None if c["end"] is None else c["end"] + t_offset
+    return tr
 
-    # visualization
-    vis = case.artifacts_dir / f"{ev.id}_{label}_spectrogram.png"
+
+def draw_spectrogram(path, title, y16, marks, t_offset) -> None:
     fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(11, 4.6), sharex=True, gridspec_kw={"height_ratios": [1, 2.2]})
     t = np.arange(len(y16)) / 16000 + t_offset
-    step = max(1, len(y16) // 20000)
-    ax0.plot(t[::step], y16[::step], lw=0.5, color="#334")
+    every = max(1, len(y16) // 20000)
+    ax0.plot(t[::every], y16[::every], lw=0.5, color="#334")
     ax0.set_ylabel("amp")
-    ax0.set_title(f"{ev.name} — {label} waveform & spectrogram (shaded = flagged)", fontsize=10)
+    ax0.set_title(title, fontsize=10)
     ff, tt, S = signal.spectrogram(y16, 16000, nperseg=512, noverlap=384)
     ax1.pcolormesh(tt + t_offset, ff / 1000, 10 * np.log10(S + 1e-12), shading="auto", cmap="magma")
     ax1.set_ylabel("kHz")
@@ -286,7 +277,54 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0, 
             else:
                 ax.axvspan(s + t_offset, e + t_offset, color=colors[kind], alpha=0.28)
     fig.tight_layout()
-    fig.savefig(vis, dpi=110)
+    fig.savefig(path, dpi=110)
     plt.close(fig)
-    return {"indicators": inds, "visuals": {f"{label.capitalize()} spectrogram": case.rel(vis)}, "metrics": metrics,
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------------------------------------
+
+def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0, step=None) -> dict:
+    """Run every audio check on a standalone audio file, or on a video's audio track (source_path set,
+    label "audio track"). Returns indicators, the spectrogram, metrics, metadata and the transcript."""
+    step = step or (lambda frac, msg: None)   # progress inside this file: frac 0..1
+    path = source_path or ev.path
+    step(0.05, "Reading the file and its AI labels (C2PA)")
+    info = probe(path)
+    a = next((s for s in info.get("streams", []) if s.get("codec_type") == "audio"), {})
+    y, sr = load_audio(path)
+    y16, _ = load_audio(path, sr=16000)
+    dur = len(y16) / 16000 if len(y16) else 0.0
+    metrics = {"duration_s": round(dur, 2), "sample_rate": sr, "codec": a.get("codec_name"),
+               "bit_rate": a.get("bit_rate") or info.get("format", {}).get("bit_rate"),
+               "encoder": (info.get("format", {}).get("tags", {}) or {}).get("encoder")}
+    out, marks, meta = Findings(ev, nid, label), [], {}
+    if source_path is None:   # a video's own provenance is read by video_forensics
+        prov = scan_provenance(ev.path)
+        metrics["provenance"] = prov
+        out += provenance_indicators(ev, prov, nid, label, R)
+        meta = {"c2pa_present": prov["c2pa_present"], "provenance": prov,
+                "ai_signatures": ["C2PA digitalSourceType: " + t for t in prov["ai_source_types"]]}
+
+    step(0.2, "Signal checks: silence gaps, noise floor, band limit")
+    check_sample_rate(out, sr)
+    if dur < 0.5:
+        return {"indicators": list(out), "visuals": {}, "metrics": metrics, "metadata": meta,
+                "transcript": {"text": "", "chunks": []}}
+    db, hop, peak = _frames_db(y16, 16000)
+    speech = db > (np.percentile(db, 90) - 25)
+    metrics["speech_ratio"] = round(float(speech.mean()), 3)
+    check_digital_silence(out, metrics, marks, db, peak, speech, hop, t_offset)
+    check_noise_floor(out, metrics, marks, db, peak, hop, t_offset)
+    check_bandwidth(out, metrics, y, sr)
+    check_voice_model(out, metrics, marks, y16, speech, hop, t_offset, step)
+
+    step(0.6, "Transcribing speech (Whisper)")
+    tr = transcript_for(y16, t_offset)
+
+    step(0.9, "Drawing the spectrogram")
+    vis = case.artifacts_dir / f"{ev.id}_{label}_spectrogram.png"
+    draw_spectrogram(vis, f"{ev.name} — {label} waveform & spectrogram (shaded = flagged)", y16, marks, t_offset)
+    return {"indicators": list(out), "visuals": {f"{label.capitalize()} spectrogram": case.rel(vis)}, "metrics": metrics,
             "metadata": meta, "transcript": tr}

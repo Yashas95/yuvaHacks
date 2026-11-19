@@ -151,12 +151,41 @@ counts as a check that ran; the likelihood is unchanged.
 **Limit:** once a platform strips the manifest (re-upload, screen recording), this evidence is gone. That is why the
 report recommends asking for the original file and checking SynthID.
 
+## 8. Restructured video/audio code, and a face model that doesn't separate (2026-11-20)
+
+**Architecture.** `analyze_video` and `analyze_audio` were each one function of 200+ lines. They are now a list of
+small named checks (`check_cuts`, `check_frozen_frames`, `check_frame_ml`, `check_face_ml`, `check_overlay`,
+`check_sample_rate`, `check_digital_silence`, `check_noise_floor`, `check_bandwidth`, `check_voice_model`) plus
+drawing functions, sharing one `evidence.Findings` helper. To prove the restructuring changed nothing,
+`tools/regress.py` recorded every verdict and finding for 12 files first and compared after: **no differences**.
+
+**Measured.** With the golden snapshot we read each video's findings side by side:
+
+| Video | Truth | Face model | AI-frame model | Before |
+|---|---|---|---|---|
+| WhatsApp selfie | real | **0.81** | leans real (0.92) | 40 % |
+| Veo 3 via Instagram | AI | 0.80 | 0.95 | 44 % |
+| Wan avatar | AI | 0.88 | 1.00 | 44 % |
+
+The face model gave the real selfie the same score as the AI videos (19 Nov: real 0.655 vs Veo 0.662, §2). It adds
+nothing but a false "face-swap" finding on real people. **Change:** `UNRELIABLE_FACE_MODELS` in `config.py`, same
+policy as the voice model: scores stay in the metrics and frame strip, never become findings, and the report says why.
+Pinned by `test_face_model_that_failed_evaluation_is_not_counted`.
+
+**Result.** Real selfie 40 % → **20 %**; Veo 3 and Wan stay 44 %; the Attendify promo (truth unknown, 8 real cuts)
+64 % → 56 % Moderate. All 9 other files (photos, audio, planted tests) unchanged.
+
+**What would move video/audio accuracy further** (needs data, not rules): more labelled clips (10+ real and 10+ AI
+per type, ideally re-shared through WhatsApp/Instagram), and evaluating two Apache-2.0 voice-deepfake candidates
+(`abhishtagatya/hubert-base-960h-itw-deepfake`, 378 MB; `garystafford/wav2vec2-deepfake-voice-detector`, 1.26 GB)
+with `tools/eval_detectors.py` before trusting either.
+
 ## Current results (2026-11-20, this code)
 
 | File | Truth | TruthLens |
 |---|---|---|
-| WhatsApp selfie video | real | 40 % Inconclusive · Low |
-| FaceTime screen capture | real | 44 % Inconclusive · Low |
+| WhatsApp selfie video | real | 20 % Inconclusive · Low |
+| FaceTime screen capture | real | 44 % Inconclusive · Low (19 Nov; file no longer available to re-run) |
 | Veo 3 via Instagram | AI | 44 % Inconclusive · Low |
 | Wan avatar video | AI | 44 % Inconclusive · Low |
 | TryOnMe image | AI | **95 % Strong** · High (Google C2PA manifest: generative AI) |

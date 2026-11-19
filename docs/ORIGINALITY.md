@@ -12,7 +12,7 @@ Licenses are as listed on each model's Hugging Face page on 2026-11-19.
 |---|---|---|---|---|
 | AI-image score (images, video frames) | `haywoodsloan/ai-image-detector-deploy` | haywoodsloan | Apache-2.0 | one input among many, capped (see below) |
 | Fallback AI-image score | `Organika/sdxl-detector` | Organika | CC-BY-NC-3.0 (non-commercial) | only if the first model fails to load |
-| Face deepfake score | `prithivMLmods/Deep-Fake-Detector-v2-Model` (ViT, from `google/vit-base-patch16-224-in21k`) | prithivMLmods | Apache-2.0 | low-reliability input |
+| Face deepfake score | `prithivMLmods/Deep-Fake-Detector-v2-Model` (ViT, from `google/vit-base-patch16-224-in21k`) | prithivMLmods | Apache-2.0 | **scores shown, not counted**: failed our evaluation |
 | Synthetic-voice score | `MelodyMachine/Deepfake-audio-detection-V2` | MelodyMachine | Apache-2.0 | **switched off**: it failed our evaluation (shown, not used) |
 | Caption ↔ image match | `openai/clip-vit-base-patch32` | OpenAI | MIT (OpenAI CLIP repository; the Hugging Face card has no license tag) | cross-modal context check |
 | Speech-to-text | `openai/whisper-base` | OpenAI | Apache-2.0 | transcript for caption ↔ speech check |

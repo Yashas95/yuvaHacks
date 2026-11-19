@@ -91,6 +91,21 @@ def test_c2pa_ai_source_type_is_read_exactly(tmp=None):
     assert not q["c2pa_present"] and not q["ai_source_types"]
 
 
+def test_face_model_that_failed_evaluation_is_not_counted():
+    """The face model scored a real selfie like the AI videos (0.81 vs 0.80 / 0.88), so it must not create findings."""
+    from truthlens.config import UNRELIABLE_FACE_MODELS
+    from truthlens.evidence import Findings
+    from truthlens.video_forensics import check_face_ml
+    rows = [{"frame": k, "time": k / 25, "p_ai": 0.1, "faces": 1, "p_face_fake": 0.85,
+             "face_boxes": [{"bbox": [0, 0, 10, 10], "p_fake": 0.85}]} for k in range(5)]
+    counter = iter(range(100))
+    out = Findings(NS(id="E01"), lambda: f"E01-{next(counter):02d}", "video")
+    metrics = {"face_model": next(iter(UNRELIABLE_FACE_MODELS))}
+    assert check_face_ml(out, metrics, rows) == [] and len(out) == 0 and metrics["face_model_unreliable"]
+    metrics = {"face_model": "some/validated-model"}
+    assert len(check_face_ml(out, metrics, rows)) == 5 and out[0].detector == "ml_face_deepfake"
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:
