@@ -46,6 +46,11 @@ def _sentence(i: dict) -> tuple[str, str]:
     w = _where(i.get("location"))
     w = f" ({w})" if w else ""
     auth = i["supports"] == "authenticity"
+    if d == "metadata_ai_signature" and i["title"].startswith("Content Credentials"):
+        acts = [a.strip().rstrip(".") for a in re.findall(r"“([^”]+)”", obs)]
+        return "red", ("The file carries Content Credentials, a signed label from the tool that made it, saying it was "
+                       "<b>made with generative AI</b>" + (f": <i>{E('; '.join(acts[:2]))}</i>" if acts else "") +
+                       ". This is direct evidence, not a guess.")
     if d == "metadata_ai_signature":
         return "red", f"The file contains a tag written by an AI tool: <i>{E(obs.split(':', 1)[-1].strip(' .'))}</i>. This is direct evidence, not a guess."
     if d == "metadata_editor":

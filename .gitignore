@@ -9,3 +9,6 @@ demo_samples/
 .*.log
 .claude/
 .DS_Store
+
+# presentation export (contains team-supplied photos)
+TruthLens_InnovEdge2026.pdf

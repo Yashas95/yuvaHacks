@@ -12,6 +12,7 @@ from PIL import ExifTags, Image, ImageOps
 from . import models
 from .config import RELIABILITY as R, VALIDATED_RELIABILITY
 from .evidence import Indicator
+from .provenance import indicators as provenance_indicators, scan as scan_provenance
 
 AI_SIGNATURES = ["stable diffusion", "stable-diffusion", "midjourney", "dall-e", "dall·e", "novelai", "comfyui",
                  "automatic1111", "invokeai", "firefly", "imagen", "flux.1", "sdxl", "trainedalgorithmicmedia",
@@ -132,13 +133,20 @@ def read_metadata(path: Path) -> dict:
         meta["ai_signatures"].append("generation-parameters chunk (" + ",".join(
             k for k in ("parameters", "prompt", "workflow") if k in meta["png_text"]) + ")")
     meta["editors"] = sorted({e for e in EDITORS if e in blob})
+    meta["provenance"] = prov = scan_provenance(path)
+    meta["c2pa_present"] = meta["c2pa_present"] or prov["c2pa_present"]
+    meta["ai_signatures"] += ["C2PA digitalSourceType: " + t for t in prov["ai_source_types"]]
     return meta
 
 
 def metadata_indicators(ev, meta, nid) -> list[Indicator]:
     out = []
     ex = meta.get("exif", {})
-    if meta["ai_signatures"]:
+    prov = meta.get("provenance") or {"ai_source_types": [], "c2pa_present": False}
+    out += provenance_indicators(ev, prov, nid, "image", R)   # Content Credentials (AI source type or neutral note)
+    other = [x for x in meta["ai_signatures"] if not x.startswith("C2PA digitalSourceType")]
+    if other:
+        meta = {**meta, "ai_signatures": other}
         out.append(Indicator(nid(), ev.id, "image", "metadata_ai_signature", "Generator signature in metadata",
                              "synthetic", f"Embedded metadata contains: {', '.join(meta['ai_signatures'])}.",
                              "AI image tools frequently write their name, prompt or workflow into the file. "
@@ -146,7 +154,7 @@ def metadata_indicators(ev, meta, nid) -> list[Indicator]:
                              0.95, R["metadata_ai_signature"], {"type": "file"},
                              ["Metadata can be copied or forged; confirm with the original source.",
                               "Some editors (e.g. Photoshop generative fill) add the tag for partial AI edits only."]))
-    if meta["c2pa_present"]:
+    if meta["c2pa_present"] and not prov["c2pa_present"]:   # a manifest our reader couldn't decode
         out.append(Indicator(nid(), ev.id, "image", "metadata_editor", "Content Credentials (C2PA) manifest present",
                              "metadata", "A C2PA/JUMBF provenance manifest was found in the file.",
                              "Content Credentials record which tools created or edited the file. Inspect the manifest "

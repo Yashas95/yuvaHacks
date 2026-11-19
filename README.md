@@ -77,7 +77,7 @@ self-contained `report.html` (print → PDF).
 
 | Family | Checks | Evidence type |
 |---|---|---|
-| **Provenance** | EXIF/XMP/PNG chunks, C2PA manifest, AI-generator signatures, editing software, capture vs modified dates, video container tags, visible corner watermark/logo, TTS-native audio sample rate | direct, non-ML |
+| **Provenance** | EXIF/XMP/PNG chunks, C2PA Content Credentials decoded (IPTC “trainedAlgorithmicMedia” = AI) in images, video and audio, AI-generator signatures, editing software, capture vs modified dates, video container tags, visible corner watermark/logo, TTS-native audio sample rate | direct, non-ML |
 | **Pixel** | Error Level Analysis (texture-normalized, localized), sensor-noise inconsistency, SIFT copy-move, FFT periodic artifacts | signal processing |
 | **Temporal** | Full-frame scan for cuts/splices (ignoring recorder start/stop), duplicated or frozen frames, A/V length mismatch | signal processing |
 | **Audio signal** | Digital-silence gaps inside speech, background noise-floor jumps (splices), band-limited spectrum | signal processing |
@@ -112,10 +112,13 @@ Full dated record with every number: **[docs/METHODOLOGY.md](docs/METHODOLOGY.md
    speak about.
 5. **The synthetic-voice model was wrong on 4/4 files** (AI voices 0 %, real voices 100 %). Switched off, reported
    as such, and replaced by a non-ML lead (22.05/24 kHz TTS-native sample rate).
+6. **A Gemini-generated song scored 40 %.** Its MP3 carried a Google-signed Content Credentials (C2PA) manifest saying
+   “Created by Google Generative AI” that the audio path never read. `provenance.py` now decodes these manifests in
+   images, video and audio → 92 % Strong.
 
 Every rule above is pinned by a test in [`tests/test_core.py`](tests/test_core.py).
 
-## Current results (2026-11-19)
+## Current results (2026-11-20)
 
 | File | Truth | TruthLens |
 |---|---|---|
@@ -123,7 +126,8 @@ Every rule above is pinned by a test in [`tests/test_core.py`](tests/test_core.p
 | FaceTime screen capture | real | 44 % Inconclusive |
 | Veo 3 video via Instagram | AI | 44 % Inconclusive |
 | Wan avatar video | AI | 44 % Inconclusive |
-| AI try-on image | AI | **93 % Strong** (generator signature in metadata) |
+| AI try-on image | AI | **95 % Strong** (Google Content Credentials: generative AI) |
+| Gemini-generated song | AI | **92 % Strong** (Google Content Credentials + SynthID declared) |
 | AI voice reel (24 kHz) | AI | 48 % Moderate |
 | macOS text-to-speech | AI | 9 % — missed |
 | Planted spliced photo | edited | 45 % Moderate (regions boxed at the paste) |
@@ -162,6 +166,7 @@ truthlens/
   video_forensics.py    container tags, temporal cuts/duplicates, watermark overlay, per-frame ML, audio track
   audio_forensics.py    silence gaps, noise-floor splices, band limit, sample-rate lead, voice classifier, Whisper
   text_forensics.py     claim extraction and persuasion language
+  provenance.py         C2PA Content Credentials reader (AI source type, actions, signer) for all media
   correlate.py          cross-modal checks (CLIP, transcript, dates, cut↔audio, same scene)
   scoring.py            detector families, ML-only cap, confidence, recommended checks
   plain.py              plain-English answers (origin, AI?, screenshot?, edited?) for the Simple view and assistant

@@ -84,16 +84,18 @@
     </style><div class="p"><div class="h">TRUTHLENS<button class="x" title="Close">×</button></div><div class="b"></div></div>`;
     sh.querySelector(".x").onclick = () => P.hide();
     const body = sh.querySelector(".b");
+    const attach = () => { if (!host.isConnected) document.documentElement.appendChild(host); };
     P = {
       show(msg, pct) {
-        if (!host.isConnected) document.documentElement.appendChild(host);
+        attach();
         body.innerHTML = `<p>${esc(msg)}</p>` + (pct == null ? "" : `<div class="bar"><i style="width:${pct}%"></i></div>`);
       },
       result(r, server) {
+        attach();
         const col = { red: "#e5484d", orange: "#f76b15", amber: "#d99a00", green: "#2a9d63" }[r.color] || "#8a9099";
         body.innerHTML = `<div class="v"><b>${r.likelihood}%</b><span><i class="d" style="background:${col}"></i> ${esc(r.band)}</span></div>
           <div class="m">confidence ${esc(r.confidence)}</div><h3>${esc(r.headline)}</h3><p>${esc(r.sub)}</p>
-          ${r.files.map(f => `<p>${esc(f.ai)}</p>`).join("")}
+          ${r.files.map(f => `<p><b>AI-made?</b> ${esc(f.ai)}</p>`).join("")}
           ${r.note ? `<p class="m">${esc(r.note)}</p>` : ""}
           <a href="${esc(server + r.report)}" target="_blank" rel="noopener">Open full report →</a>`;
       },

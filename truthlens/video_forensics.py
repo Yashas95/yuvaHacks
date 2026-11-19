@@ -14,6 +14,7 @@ from . import models
 from .audio_forensics import analyze_audio
 from .config import RELIABILITY as R, VALIDATED_RELIABILITY, VIDEO_MAX_SAMPLED_FRAMES, VIDEO_TEMPORAL_MAX_FRAMES
 from .evidence import Indicator
+from .provenance import indicators as provenance_indicators, scan as scan_provenance
 from .image_forensics import AI_SIGNATURES, EDITORS, _draw_boxes, detect_faces, ml_face_scores, ml_image_score
 from .media_io import has_audio, probe
 
@@ -46,8 +47,12 @@ def container_indicators(ev, info, nid):
     ed = sorted({s for s in VIDEO_EDITORS + EDITORS if re.search(rf"(?<![a-z0-9]){re.escape(s)}(?![a-z0-9])", tagtxt)})
     blob = rawtxt
     meta["ai_signatures"], meta["editors"] = ai, ed
-    meta["c2pa_present"] = "c2pa" in blob
-    if ai:
+    prov = scan_provenance(ev.path)
+    meta["provenance"] = prov
+    meta["c2pa_present"] = prov["c2pa_present"] or "c2pa" in blob
+    out += provenance_indicators(ev, prov, nid, "video", R)        # Content Credentials: Veo, Sora, Firefly…
+    meta["ai_signatures"] = ai = ai + ["C2PA digitalSourceType: " + t for t in prov["ai_source_types"]]
+    if ai and not prov["ai_source_types"]:
         out.append(Indicator(nid(), ev.id, "video", "metadata_ai_signature", "Generator / face-swap tool signature",
                              "synthetic", f"Container metadata mentions: {', '.join(ai)}.",
                              "AI video tools and face-swap software often stamp their name in the file.",

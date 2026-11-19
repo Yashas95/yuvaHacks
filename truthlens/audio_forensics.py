@@ -11,6 +11,7 @@ from . import models
 from .config import UNRELIABLE_AUDIO_MODELS, AUDIO_CHUNK_SECONDS, RELIABILITY as R
 from .evidence import Indicator
 from .media_io import load_audio, probe
+from .provenance import indicators as provenance_indicators, scan as scan_provenance
 
 
 def _frames_db(y, sr, win=0.025, hop=0.010):
@@ -90,6 +91,13 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) 
                "bit_rate": a.get("bit_rate") or info.get("format", {}).get("bit_rate"),
                "encoder": (info.get("format", {}).get("tags", {}) or {}).get("encoder")}
     inds, marks = [], []
+    meta = {}
+    if source_path is None:   # a standalone audio file (a video's own track is covered by video_forensics)
+        prov = scan_provenance(ev.path)
+        metrics["provenance"] = prov
+        inds += provenance_indicators(ev, prov, nid, label, R)
+        meta = {"c2pa_present": prov["c2pa_present"], "provenance": prov,
+                "ai_signatures": ["C2PA digitalSourceType: " + t for t in prov["ai_source_types"]]}
     try:
         sr_i = int(sr or 0)
     except (TypeError, ValueError):
@@ -103,7 +111,7 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) 
                               ["Some apps, downloaders and podcast exports resample audio to 22/24 kHz.",
                                "Recorded speech can be converted to any sample rate, so this is a lead, not proof."]))
     if dur < 0.5:
-        return {"indicators": [], "visuals": {}, "metrics": metrics, "transcript": {"text": "", "chunks": []}}
+        return {"indicators": inds, "visuals": {}, "metrics": metrics, "metadata": meta, "transcript": {"text": "", "chunks": []}}
 
     db, hop, peak = _frames_db(y16, 16000)
     t_of = lambda i: i * hop / 16000
@@ -265,4 +273,4 @@ def analyze_audio(ev, case, nid, source_path=None, label="audio", t_offset=0.0) 
     fig.savefig(vis, dpi=110)
     plt.close(fig)
     return {"indicators": inds, "visuals": {f"{label.capitalize()} spectrogram": case.rel(vis)}, "metrics": metrics,
-            "transcript": tr}
+            "metadata": meta, "transcript": tr}

@@ -64,6 +64,33 @@ def test_camera_origin():
     assert origin(ev)["kind"] == "camera"
 
 
+def _cbor_text(t: bytes) -> bytes:
+    return (bytes([0x60 + len(t)]) if len(t) < 24 else bytes([0x78, len(t)])) + t
+
+
+def test_c2pa_ai_source_type_is_read_exactly(tmp=None):
+    """A C2PA manifest declaring trainedAlgorithmicMedia is found and decoded by length, not by keyword.
+    Mirrors the Gemini-generated MP3 that scored 40 % before the audio path read provenance (2026-11-20)."""
+    import tempfile
+    from truthlens.provenance import scan
+    uri = b"http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+    blob = (b"ID3\x04GEOBapplication/c2pa\x00jumbjumdc2pa c2pa.signature " + _cbor_text(b"description")
+            + _cbor_text(b"Created by Google Generative AI.") + _cbor_text(b"digitalSourceType") + _cbor_text(uri)
+            + _cbor_text(b"parameters") + b"\x06\x03\x55\x04\x0a\x0c\x0aGoogle LLC" + b"\xff" * 64)
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        f.write(blob)
+    p = scan(Path(f.name))
+    Path(f.name).unlink()
+    assert p["c2pa_present"] and p["ai_source_types"] == ["trainedAlgorithmicMedia"]
+    assert p["actions"] == ["Created by Google Generative AI."] and p["signers"] == ["Google LLC"]
+    # the same words loose in compressed data, with no manifest, must not count
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        f.write(b"\xff" * 32 + b"Created by Google Generative AI" + b"\xff" * 32)
+    q = scan(Path(f.name))
+    Path(f.name).unlink()
+    assert not q["c2pa_present"] and not q["ai_source_types"]
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:

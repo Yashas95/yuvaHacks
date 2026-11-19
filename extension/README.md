@@ -5,8 +5,11 @@ to download it first. The verdict appears in a small panel on the same page, wit
 
 ## Install (developer mode, about 1 minute)
 
-1. Open `chrome://extensions` and turn on **Developer mode** (top right).
-2. Click **Load unpacked** and choose this `extension/` folder.
+**Easiest:** on any running TruthLens site, click **Chrome extension → Download extension (.zip)** (or open
+`<server>/extension.zip`). That zip is already set to use the server you downloaded it from, so you can skip step 3.
+
+1. Unzip it (or use this `extension/` folder from the repository). Open `chrome://extensions` and turn on **Developer mode** (top right).
+2. Click **Load unpacked** and choose the unzipped `truthlens-extension` folder (or `extension/`).
 3. Click the TruthLens toolbar icon. Under **TruthLens server**, enter your server address, then click **Save**
    and **Test connection**:
    - local: `http://localhost:8000` (run `.venv/bin/python app.py`)

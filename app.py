@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import io
 import json
 import os
 import re
@@ -17,11 +18,12 @@ import shutil
 import tempfile
 import threading
 import uuid
+import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from truthlens.config import CASES_DIR, ROOT
 from truthlens.evidence import Case, modality_of
@@ -218,6 +220,30 @@ def cases(ids: str = ""):
                         "created": r["case"]["created_at"], "context": r["case"].get("context_text") or "",
                         "files": [{"name": e["name"], "modality": e["modality"]} for e in r["evidence"]]})
     return out
+
+
+EXT_DIR = ROOT / "extension"
+EXT_DEFAULT = "http://localhost:8000"
+
+
+@app.get("/extension.zip")
+def extension_zip(request: Request):
+    """The Chrome extension as a ready-to-load zip, pre-set to the server it was downloaded from."""
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    base = f"{proto}://{host}"
+    if not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d+)?", base):
+        base = EXT_DEFAULT
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(EXT_DIR.rglob("*")):
+            if f.is_file() and not f.name.startswith("."):
+                data = f.read_bytes()
+                if f.suffix in (".js", ".html"):
+                    data = data.replace(EXT_DEFAULT.encode(), base.encode())
+                z.writestr(f"truthlens-extension/{f.relative_to(EXT_DIR)}", data)
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="truthlens-extension.zip"'})
 
 
 HANDS_FILE = Path(__file__).resolve().parent / "truthlens" / "hand_field.json"
