@@ -93,6 +93,7 @@ class Evidence:
     size: int
     received_at: str
     meta: dict = field(default_factory=dict)
+    acquisition: dict = field(default_factory=dict)   # how it was obtained (truthlens/acquisition.py); {} = uploaded file
 
 
 class Case:
@@ -115,7 +116,7 @@ class Case:
     def add_log(self, action: str, detail: str):
         self.log.append({"time": now(), "action": action, "detail": detail})
 
-    def add_file(self, src: Path, display_name: str | None = None) -> Evidence:
+    def add_file(self, src: Path, display_name: str | None = None, acquisition: dict | None = None) -> Evidence:
         src = Path(src)
         name = display_name or src.name
         eid = f"E{len(self.evidence) + 1:02d}"
@@ -126,9 +127,13 @@ class Case:
         h_dst = sha256(dst)
         if h_src != h_dst:
             raise RuntimeError(f"Hash mismatch while copying {name}")
-        ev = Evidence(eid, name, modality_of(dst), dst, h_dst, dst.stat().st_size, now())
+        ev = Evidence(eid, name, modality_of(dst), dst, h_dst, dst.stat().st_size, now(), acquisition=dict(acquisition or {}))
         self.evidence.append(ev)
         self.add_log("evidence_ingested", f"{eid} {name} ({ev.modality}, {ev.size} bytes) sha256={h_dst}")
+        if ev.acquisition:
+            from .acquisition import describe
+            self.add_log("evidence_acquired", f"{eid} acquired as {describe(ev.acquisition)}"
+                         + (f"; page {ev.acquisition['page_url']}" if ev.acquisition.get("page_url") else ""))
         return ev
 
     def set_context(self, text: str):

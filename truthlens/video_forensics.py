@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 
 from . import models
+from .acquisition import method as acquisition_method
 from .audio_forensics import analyze_audio
 from .config import RELIABILITY as R, UNRELIABLE_FACE_MODELS, VALIDATED_RELIABILITY, VIDEO_MAX_SAMPLED_FRAMES, VIDEO_TEMPORAL_MAX_FRAMES
 from .evidence import Findings, Indicator
@@ -158,11 +159,12 @@ def scan_frames(path):
     W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     scan_n = min(total, VIDEO_TEMPORAL_MAX_FRAMES) if total > 0 else VIDEO_TEMPORAL_MAX_FRAMES
     sample_idx = set(np.linspace(0, max(scan_n - 1, 0), min(VIDEO_MAX_SAMPLED_FRAMES, max(scan_n, 1))).astype(int).tolist())
-    diffs, frames, prev, i = [], {}, None, 0
+    diffs, frames, prev, i, stamps = [], {}, None, 0, []
     while i < scan_n:
         ok, fr = cap.read()
         if not ok:
             break
+        stamps.append(cap.get(cv2.CAP_PROP_POS_MSEC))
         small = cv2.cvtColor(cv2.resize(fr, (160, max(1, int(160 * fr.shape[0] / fr.shape[1])))), cv2.COLOR_BGR2GRAY).astype(np.float32)
         diffs.append(0.0 if prev is None else float(np.abs(small - prev).mean()))
         prev = small
@@ -171,6 +173,12 @@ def scan_frames(path):
             frames[i] = cv2.cvtColor(cv2.resize(fr, None, fx=s, fy=s) if s < 1 else fr, cv2.COLOR_BGR2RGB)
         i += 1
     cap.release()
+    # Browser recordings (MediaRecorder WebM) often report a timebase such as 1000 fps instead of a frame rate.
+    # When the reported rate is implausible, measure it from the frame timestamps instead.
+    if not 1 <= fps <= 120 and len(stamps) > 2 and stamps[-1] > stamps[0]:
+        fps = (len(stamps) - 1) * 1000.0 / (stamps[-1] - stamps[0])
+    if not 1 <= fps <= 120:
+        fps = 30.0
     return fps, total, W, H, np.array(diffs), frames
 
 
@@ -390,16 +398,22 @@ def analyze_video(ev, case, nid) -> dict:
     """Container/provenance tags, temporal cuts and frozen frames, per-frame AI and face models, corner
     watermark, then the audio track through audio_forensics. Returns indicators, visuals and metrics."""
     info = probe(ev.path)
-    inds, cmeta = container_indicators(ev, info, nid)
+    recording = acquisition_method(ev) == "recording"
+    # A browser recording's container (encoder, track lengths, tags) is written by Chrome's recorder, not the
+    # media: read it for the facts, but don't turn it into findings.
+    inds, cmeta = container_indicators(ev, info, (lambda: "-") if recording else nid)
     out = Findings(ev, nid, "video")
-    out += inds
+    if not recording:
+        out += inds
     fps, total, W, H, d, frames = scan_frames(ev.path)
     n = len(d)
     metrics = {"fps": round(fps, 2), "frames_scanned": n, "frames_total": total, "resolution": f"{W}x{H}",
                "duration_s": round(n / fps, 2), **{k: v for k, v in cmeta.items() if k != "tags"}}
 
     cuts = check_cuts(out, metrics, d, fps)
-    check_frozen_frames(out, metrics, d, fps)
+    if not recording:   # the recorder repeats frames when the page doesn't paint a new one
+        check_frozen_frames(out, metrics, d, fps)
+    metrics["skipped_checks"] = ["video_metadata", "video_duplicate_frames"] if recording else []
 
     rows = score_frames(frames, fps)
     metrics["frame_scores"] = [{k: v for k, v in r.items() if k != "face_boxes"} for r in rows]

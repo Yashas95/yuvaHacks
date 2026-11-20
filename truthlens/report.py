@@ -11,6 +11,7 @@ import html
 import json
 from pathlib import Path
 
+from .acquisition import describe as describe_acquisition
 from .plain import build as build_plain
 
 # Styles and scripts live in truthlens/assets/ and are inlined so every report.html stays self-contained.
@@ -484,6 +485,12 @@ def render_html(r: dict, case_dir: Path) -> str:
         f"<td>{'<span class=ok>✓ unchanged</span>' if x['unchanged'] else '<span class=bad>✗ MODIFIED</span>'}</td></tr>"
         for x in r["integrity"])
     all_ok = all(x["unchanged"] for x in r["integrity"]) if r["integrity"] else True
+    acq_rows = "".join(
+        f"<li><span class='mono'>{E(e['id'])}</span> {E(describe_acquisition(e['acquisition']))}"
+        + (f" · <span class='mono small'>{E(e['acquisition']['page_url'])}</span>" if e['acquisition'].get('page_url') else "")
+        + "</li>" for e in r["evidence"] if e.get("acquisition"))
+    acq_html = (f"<p class='small'><b>How the evidence was obtained</b></p><ul class='small'>{acq_rows}</ul>"
+                if acq_rows else "")
     logs = "".join(f"<li><span class='mono small muted'>{E(l['time'][11:19] if len(l['time']) > 19 else l['time'])}</span>"
                    f"<b>{E(l['action'].replace('_', ' '))}</b><span class='small'>{E(l['detail'])}</span></li>" for l in r["log"])
     mdl = "".join(f"<li class='mono small'>{E(m)}</li>" for m in r["tool"]["models"]) or "<li>No ML models were loaded.</li>"
@@ -575,7 +582,7 @@ families are combined as independent lines of evidence. ML-only findings are cap
 <section class="card" id="custody"><div class="sh"><span class="num">07</span><h2>Chain of custody</h2>
 <span class="{'ok' if all_ok else 'bad'}">{'✓ all evidence unchanged after analysis' if all_ok else '✗ integrity check failed'}</span></div>
 <div class="tablewrap"><table class="inv"><thead><tr><th>ID</th><th>File</th><th>Type</th><th>SHA-256 (at intake)</th><th>Integrity</th></tr></thead><tbody>{inv}</tbody></table></div>
-<p class="small muted">Originals were copied into the case folder as read-only files, hashed at intake and re-hashed after analysis. All visualizations are derived copies.</p></section>
+{acq_html}<p class="small muted">Originals were copied into the case folder as read-only files, hashed at intake and re-hashed after analysis. All visualizations are derived copies.</p></section>
 
 <section class="card two" id="method"><div><div class="sh"><span class="num">08</span><h2>Analysis history</h2></div><ol class="log">{logs}</ol></div>
 <div><div class="sh"><h2>Models used</h2></div><ul class="models">{mdl}</ul>

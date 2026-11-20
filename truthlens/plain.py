@@ -9,6 +9,8 @@ from __future__ import annotations
 import html
 import re
 
+from .acquisition import CAPTURED, describe as describe_acquisition, host as acq_host
+
 E = html.escape
 
 CONF_WORDS = {
@@ -136,6 +138,14 @@ def origin(ev: dict) -> dict:
     if "metadata_ai_signature" in det or md.get("ai_signatures"):
         return {"kind": "ai", "label": "AI-generated", "certain": True,
                 "why": "The file itself carries a tag from an AI generation tool."}
+    acq = ev.get("acquisition") or {}
+    if acq.get("method") in CAPTURED:
+        site = acq_host(acq) or "a web page"
+        what = {"recording": "recording", "video-frame": "frame", "screen-capture": "screenshot",
+                "image-pixels": "image copy"}[acq["method"]]
+        return {"kind": "capture", "label": f"Captured from {site} ({what})", "certain": True,
+                "why": f"The TruthLens extension captured this from {site}, so the original file's camera data, "
+                       "dates and AI labels aren't available to check."}
     if mod == "image":
         tag = "screenshot" in blob
         fname = bool(re.search(r"screen ?shot|screen ?grab|scrn", name, re.I))
@@ -252,6 +262,9 @@ def _screenshot_answer(ev: dict, org: dict) -> str:
         return f"<b>No.</b> {org['why']} Screenshots don't contain camera details."
     if org["kind"] == "ai":
         return "<b>No sign of a screenshot.</b> The file looks like a direct export from an AI tool."
+    if org["kind"] == "capture":
+        return ("<b>We can't tell from this copy.</b> TruthLens captured it from the page itself, so the original "
+                "file's screenshot or camera information isn't in it.")
     if ev["modality"] == "video":
         return ("<b>No sign of a screen recording.</b> There's no recording-device information either — "
                 "videos downloaded from social media usually lose it.")
@@ -275,6 +288,9 @@ def _facts(ev: dict) -> dict:
     m = ev.get("metrics") or {}
     ex = md.get("exif") or {}
     f = {}
+    acq = ev.get("acquisition") or {}
+    if acq:
+        f["How we got it"] = describe_acquisition(acq)
     if ev["modality"] == "image":
         cam = " ".join(x for x in [ex.get("Make"), ex.get("Model")] if x)
         f["Camera"] = cam or "not recorded"

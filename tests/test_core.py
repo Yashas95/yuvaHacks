@@ -106,8 +106,42 @@ def test_face_model_that_failed_evaluation_is_not_counted():
     assert len(check_face_ml(out, metrics, rows)) == 5 and out[0].detector == "ml_face_deepfake"
 
 
+def test_captured_media_skips_checks_that_would_describe_the_copy():
+    """A reel the extension screenshots or records gets ELA / noise / frequency numbers about the capture, not the media."""
+    from truthlens.acquisition import CAPTURED, FILE_LEVEL_IMAGE_CHECKS, METHODS, skipped_image_checks
+    assert skipped_image_checks(NS(acquisition={})) == set()                      # a normal upload keeps every check
+    assert skipped_image_checks(NS(acquisition={"method": "original"})) == set()  # the original file, fetched by the extension
+    for m in CAPTURED - {"screen-capture"}:
+        assert skipped_image_checks(NS(acquisition={"method": m})) == FILE_LEVEL_IMAGE_CHECKS
+    shot = skipped_image_checks(NS(acquisition={"method": "screen-capture"}))     # the site's own icons repeat in a screenshot
+    assert shot == FILE_LEVEL_IMAGE_CHECKS | {"copy_move"}
+    assert set(METHODS) >= CAPTURED | {"original"}
+
+
+def test_extension_acquisition_json_is_validated():
+    from truthlens.acquisition import describe, parse
+    assert parse("not json") == parse('{"method": "teleport"}') == parse("[1]") == parse(None) == {}
+    a = parse('{"method": "recording", "seconds": 6.04, "width": 720, "height": 1280, "page_url": "https://www.instagram.com/reel/x/",'
+              ' "source_url": "javascript:alert(1)", "page_title": "' + "t" * 500 + '", "evil": 1}')
+    assert a["method"] == "recording" and a["seconds"] == 6.04 and (a["width"], a["height"]) == (720, 1280)
+    assert "source_url" not in a and "evil" not in a and len(a["page_title"]) == 200
+    assert parse('{"method": "recording", "seconds": 9999, "width": -4}') == {"method": "recording"}
+    assert describe(a) == "short recording of the playing video (6.0 s), 720×1280 px on instagram.com"
+
+
+def test_every_capture_method_gets_a_plain_label():
+    """Adding a capture method without a label in plain.py raised KeyError in the report (found while adding image copies)."""
+    from truthlens.acquisition import CAPTURED, limitation
+    for m in sorted(CAPTURED):
+        ev = {"modality": "image", "name": "x.png", "indicators": [], "metadata": {},
+              "acquisition": {"method": m, "page_url": "https://example.com/p"}}
+        o = origin(ev)
+        assert o["kind"] == "capture" and "example.com" in o["label"], m
+        assert limitation("x.png", ev["acquisition"]), m
+
+
 if __name__ == "__main__":
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
+    tests =[(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:
         fn()
         print(f"ok  {name}")

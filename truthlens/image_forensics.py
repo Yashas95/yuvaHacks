@@ -11,6 +11,7 @@ from PIL import ExifTags, Image, ImageOps
 
 from . import models
 from .config import RELIABILITY as R, UNRELIABLE_FACE_MODELS, VALIDATED_RELIABILITY
+from .acquisition import skipped_image_checks
 from .evidence import Indicator
 from .provenance import indicators as provenance_indicators, scan as scan_provenance
 
@@ -475,12 +476,15 @@ def ml_indicators(rgb, ev, case, nid):
 
 # ----------------------------------------------------------------------------- entry
 def analyze_image(ev, case, nid) -> dict:
+    # Frames and screenshots captured by the browser extension skip the checks that describe the file itself
+    # (truthlens/acquisition.py): their metadata, compression and noise come from the capture, not the media.
+    skip = skipped_image_checks(ev)
     meta = read_metadata(ev.path)
     ev.meta = meta
     rgb = np.asarray(load_rgb(ev.path))
     is_jpeg = (meta.get("format") or "").upper() in {"JPEG", "MPO"}
-    inds = metadata_indicators(ev, meta, nid)
-    visuals, metrics, errors = {}, {}, []
+    inds = metadata_indicators(ev, meta, nid) if "metadata" not in skip else []
+    visuals, metrics, errors = {}, {"skipped_checks": sorted(skip)}, []
 
     def safe(name, fn, *a):
         try:
@@ -489,16 +493,16 @@ def analyze_image(ev, case, nid) -> dict:
             errors.append(f"{name}: {type(e).__name__}: {e}")
             return None
 
-    r = safe("ela", ela, rgb, ev, case, nid, is_jpeg)
+    r = safe("ela", ela, rgb, ev, case, nid, is_jpeg) if "ela" not in skip else None
     if r:
         inds += r[0]; metrics["ela"] = r[1]; visuals["Error Level Analysis"] = case.rel(r[2])
-    r = safe("noise", noise_map, rgb, ev, case, nid)
+    r = safe("noise", noise_map, rgb, ev, case, nid) if "noise" not in skip else None
     if r:
         inds += r[0]; metrics["noise"] = r[1]; visuals["Noise consistency"] = case.rel(r[2])
-    r = safe("copy_move", copy_move, rgb, ev, case, nid)
+    r = safe("copy_move", copy_move, rgb, ev, case, nid) if "copy_move" not in skip else None
     if r:
         inds += r[0]; metrics["copy_move"] = r[1]
-    r = safe("spectrum", spectrum, rgb, ev, case, nid)
+    r = safe("spectrum", spectrum, rgb, ev, case, nid) if "fft" not in skip else None
     if r:
         inds += r[0]; metrics["spectrum"] = r[1]
     r = safe("ml", ml_indicators, rgb, ev, case, nid)

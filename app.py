@@ -25,6 +25,8 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
+from truthlens.acquisition import CAPTURED, describe as describe_acquisition, limitation as acquisition_note, \
+    parse as parse_acquisition
 from truthlens.config import CASES_DIR, ROOT
 from truthlens.evidence import Case, modality_of
 from truthlens.pipeline import run_case
@@ -84,12 +86,12 @@ if os.environ.get("TRUTHLENS_HOSTED") and not os.environ.get("TRUTHLENS_PUBLIC_D
     SAMPLE_DIRS = {"planted": ROOT / "test_assets"}
 
 
-def _work(job_id, files, text, case):
+def _work(job_id, files, text, case, acquisition=None):
     def prog(p, m):
         JOBS[job_id].update(progress=p, message=m)
     try:
         with LOCK:
-            run_case(files, text, prog, case=case)
+            run_case(files, text, prog, case=case, acquisition=acquisition)
         JOBS[job_id].update(status="done", progress=100, message="Report ready")
     except Exception as e:
         JOBS[job_id].update(status="error", message=f"{type(e).__name__}: {e}")
@@ -98,16 +100,20 @@ def _work(job_id, files, text, case):
             Path(p).unlink(missing_ok=True)
 
 
-def _start(saved, context):
+def _start(saved, context, acquisition=None):
     case = Case()
     job = uuid.uuid4().hex[:10]
-    JOBS[job] = {"status": "running", "progress": 1, "message": "Queued", "case_id": case.id}
-    threading.Thread(target=_work, args=(job, saved, context, case), daemon=True).start()
+    queued = "Queued" if not LOCK.locked() else "Waiting for the analysis ahead of yours"
+    JOBS[job] = {"status": "running", "progress": 1, "message": queued, "case_id": case.id}
+    threading.Thread(target=_work, args=(job, saved, context, case, acquisition), daemon=True).start()
     return {"job": job, "case_id": case.id}
 
 
 @app.post("/api/analyze")
-async def analyze(files: list[UploadFile] = File(default=[]), context: str = Form(default="")):
+async def analyze(files: list[UploadFile] = File(default=[]), context: str = Form(default=""),
+                  acquisition: str = Form(default="")):
+    """Upload files (and an optional claim). The browser extension also sends `acquisition`: a JSON description of
+    how it obtained the media (original file, recording, frame or screenshot; page URL; time). See acquisition.py."""
     files = [f for f in files if f.filename]
     if not files and not context.strip():
         raise HTTPException(400, "Upload at least one file or enter a claim.")
@@ -118,7 +124,7 @@ async def analyze(files: list[UploadFile] = File(default=[]), context: str = For
         with open(p, "wb") as out:
             shutil.copyfileobj(f.file, out)
         saved.append((p, Path(f.filename).name))
-    return _start(saved, context)
+    return _start(saved, context, parse_acquisition(acquisition))
 
 
 def _sample_path(ref: str) -> Path:
@@ -194,10 +200,18 @@ def summary(case_id: str):
         raise HTTPException(404)
     r = json.loads(p.read_text())
     P, ov = build_plain(r), r["overall"]
+    strip = lambda t: html.unescape(re.sub(r"<[^>]+>", "", t or ""))
+    acq = {e["id"]: e.get("acquisition") or {} for e in r["evidence"]}
     return {"case_id": Path(case_id).name, "headline": P["headline"], "sub": P["sub"], "color": ov["color"],
             "band": ov["band"], "likelihood": ov["likelihood"], "confidence": ov["confidence"],
+            "range": ov.get("range"),
             "files": [{"name": f.get("name"), "origin": (f.get("origin") or {}).get("label"),
-                       "ai": re.sub(r"<[^>]+>", "", f["answers"]["ai"])} for f in P["files"]],
+                       "ai": strip(f["answers"]["ai"]), "edited": strip(f["answers"]["edited"]),
+                       "how": describe_acquisition(acq.get(f["id"], {})),
+                       "captured": acq.get(f["id"], {}).get("method") in CAPTURED,
+                       "note": acquisition_note(f.get("name", ""), acq.get(f["id"], {})),
+                       "reasons": [{"kind": x["kind"], "text": strip(x["text"])} for x in f["reasons"]
+                                   if x["kind"] != "info"][:3]} for f in P["files"]],
             "next_steps": P["next_steps"][:3], "report": f"/case/{Path(case_id).name}"}
 
 

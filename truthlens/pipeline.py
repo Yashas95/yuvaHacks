@@ -5,6 +5,7 @@ import time
 import traceback
 from pathlib import Path
 
+from .acquisition import limitation as acquisition_limitation, skipped_image_checks
 from . import models
 from .audio_forensics import analyze_audio
 from .config import VERSION
@@ -26,13 +27,16 @@ def _nid_factory(prefix):
     return nid
 
 
-def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=None, case: Case | None = None):
+def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=None, case: Case | None = None,
+             acquisition: dict | None = None):
+    """Analyze uploaded files. `acquisition` (truthlens/acquisition.py) says how the browser extension obtained
+    them; omit it for ordinary uploads."""
     progress = progress or (lambda pct, msg: None)
     t0 = time.time()
     case = case or Case()
     progress(3, "Securing evidence (hashing, read-only copies)")
     for path, name in files:
-        case.add_file(Path(path), name)
+        case.add_file(Path(path), name, acquisition=acquisition)
     extra_text = []
     for ev in case.evidence:
         if ev.modality == "text":
@@ -54,14 +58,14 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
         try:
             if ev.modality == "image":
                 r = analyze_image(ev, case, nid)
-                families |= {"metadata", "ela", "noise", "copy_move", "fft"}
+                families |= {"metadata", "ela", "noise", "copy_move", "fft"} - skipped_image_checks(ev)
                 if r["metrics"]["ml"].get("image_ai_p") is not None:
                     families.add("ml_image_ai")
                 if (r["metadata"].get("format") or "").upper() not in ("JPEG", "MPO"):
                     limitations.append(f"{ev.name}: not a JPEG, so Error Level Analysis is less informative.")
             elif ev.modality == "video":
                 r = analyze_video(ev, case, nid)
-                families |= {"video_metadata", "video_temporal", "video_duplicate_frames"}
+                families |= {"video_metadata", "video_temporal", "video_duplicate_frames"} - set(r["metrics"].get("skipped_checks", []))
                 if any(f.get("p_ai") is not None for f in r["metrics"].get("frame_scores", [])):
                     families.add("ml_image_ai")
                 if any(f.get("p_face_fake") is not None for f in r["metrics"].get("frame_scores", [])) \
@@ -118,7 +122,8 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
     progress(90, "Scoring and building report")
     per_ev = {}
     for eid, r in results.items():
-        fam = {i.detector for i in r["indicators"]} | ({"metadata", "ela", "noise"} if r["evidence"].modality == "image" else set())
+        fam = {i.detector for i in r["indicators"]} | (({"metadata", "ela", "noise"} - skipped_image_checks(r["evidence"]))
+                                                       if r["evidence"].modality == "image" else set())
         per_ev[eid] = aggregate(r["indicators"] + [i for i in x["indicators"] if eid in i.evidence_id.split("+")], fam)
     overall = aggregate(all_inds, families, len(missing))
     if overall.get("ml_only"):
@@ -141,6 +146,10 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
         fid = models.STATUS.get("face_deepfake", {}).get("model") or next(iter(UNRELIABLE_FACE_MODELS))
         limitations.insert(0, f"Face-deepfake classifier {fid} did not separate real from AI faces in our evaluation "
                               f"({UNRELIABLE_FACE_MODELS.get(fid, '')}); its scores are shown but not counted.")
+    for r in results.values():
+        note = acquisition_limitation(r["evidence"].name, r["evidence"].acquisition)
+        if note:
+            limitations.insert(0, note)
     for r in results.values():
         tr = r.get("transcript") or {}
         if tr.get("truncated_at_s"):
@@ -171,7 +180,7 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
         ev = r["evidence"]
         report["evidence"].append({
             "id": ev.id, "name": ev.name, "modality": ev.modality, "sha256": ev.sha256, "size": ev.size,
-            "received_at": ev.received_at, "stored_as": case.rel(ev.path),
+            "received_at": ev.received_at, "stored_as": case.rel(ev.path), "acquisition": ev.acquisition,
             "assessment": per_ev[eid], "visuals": r.get("visuals", {}),
             "indicators": [i.to_dict() for i in r["indicators"]],
             "metrics": r.get("metrics", {}), "metadata": _clean_meta(r.get("metadata")),
