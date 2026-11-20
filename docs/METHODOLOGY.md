@@ -200,7 +200,7 @@ type, so no check ran, yet the empty result was presented as "looks normal".
    catch it**: tuning to one file would make it misfire on formal human writing. The file fingerprint caught it.
 
 **Also fixed.** Uploads of ~26 MB failed on the hosted demo with "413 Request Entity Too Large" (GitHub's proxy
-limit) and the page printed raw HTML. Files now go up in 8 MB pieces (`/api/upload_chunk`), checked end to end
+limit) and the page printed raw HTML. Files now go up in 3 MB pieces (`/api/upload_chunk`; 6 MB pieces stalled at the proxy), checked end to end
 with a 30 MB file, and errors are shown as plain sentences.
 
 ## Current results (2026-11-20, this code)

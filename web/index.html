@@ -358,7 +358,7 @@ async function submit(url,fd,btn){
  if(!r.ok){st.textContent='Error: '+(await errText(r));btn.disabled=false;return}
  const {job,case_id}=await r.json();try{const m=JSON.parse(localStorage.getItem('tl-cases')||'[]');m.unshift(case_id);localStorage.setItem('tl-cases',JSON.stringify(m.slice(0,30)))}catch(e){}track(job,case_id);document.getElementById('analyze').scrollIntoView({behavior:'smooth',block:'start'});
 }
-const CHUNK=8*1024*1024;   // hosting proxies (GitHub Codespaces) reject request bodies of ~25 MB, so files go up in pieces
+const CHUNK=3*1024*1024;   // the Codespaces proxy rejects ~25 MB bodies and stalls on 6 MB ones, so files go up in 3 MB pieces
 async function sendFile(f,st){let id='',off=0;
  do{const fd=new FormData();fd.append('upload',id);fd.append('name',f.name);fd.append('offset',off);fd.append('chunk',f.slice(off,off+CHUNK),f.name);
   const r=await fetch('/api/upload_chunk',{method:'POST',body:fd});if(!r.ok)throw new Error(await errText(r));
