@@ -1,12 +1,30 @@
 # TruthLens — Multimodal Digital Forensics & Deepfake Detection
 
-**InnovEdge Hackathon 2026 · Problem Statement 04.** TruthLens takes image, video, audio and text evidence and
+[![Tests](https://github.com/Yashas95/yuvaHacks/actions/workflows/tests.yml/badge.svg)](https://github.com/Yashas95/yuvaHacks/actions/workflows/tests.yml)
+[![Container image](https://github.com/Yashas95/yuvaHacks/actions/workflows/image.yml/badge.svg)](https://github.com/Yashas95/yuvaHacks/actions/workflows/image.yml)
+
+**InnovEdge Hackathon 2026 · Problem Statement 04 · Team YUVA (team no. 5) · Team leader: Yashas S**
+
+TruthLens takes image, video, audio and text evidence and
 produces an **explainable forensic report**: what was flagged, where (region / frame / timestamp / audio segment),
 why, how reliable each detector is, what else could explain it, how signals across media relate, and the
-limitations of the result. It runs fully offline on a laptop; evidence never leaves the machine.
+limitations of the result. It runs fully offline on a laptop, so evidence never has to leave the machine.
 
 > A detection score is an indicator, not a verdict. TruthLens is built to say *"we can't tell"* rather than
 > produce a confident wrong answer — see [docs/METHODOLOGY.md](docs/METHODOLOGY.md) for how we measured that.
+
+![TruthLens report for the planted joined video: 74 % "Strong", with a plain-English answer to each question](docs/img/report.png)
+
+## For judges: a 3-minute tour
+
+| What to check | Where to see it |
+|---|---|
+| **It works** | Live demo: **<https://truthlens-xrw9944xr57c6xr7-7860.app.github.dev>**. Click a planted sample (spliced photo, joined video, edited voice note) or upload your own file. It runs on a free GitHub Codespace, so it is online while our team keeps it running; the [Quick start](#quick-start) runs the same app locally. |
+| **It explains itself** | Every report answers four plain questions per file (*What is this file? Is it AI-made? Is it a screenshot? Was it edited?*). The Expert view lists every finding with what was measured, why it matters, how reliable the detector is, and what else could explain it. |
+| **It is honest about uncertainty** | Findings that rest only on ML classifiers are capped at "Inconclusive", and models that failed our own tests are shown but not counted. The dated evidence for each rule is in [docs/METHODOLOGY.md](docs/METHODOLOGY.md). |
+| **It is tested** | 12 regression tests, each pinning a fix for a real failure ([`tests/test_core.py`](tests/test_core.py), run on every push by [CI](.github/workflows/tests.yml)), plus a golden check that every verdict and finding stays the same after a change ([`tools/regress.py`](tools/regress.py)). |
+| **It is our own work** | Which pretrained models we reuse, under which licenses, and everything we wrote ourselves: [docs/ORIGINALITY.md](docs/ORIGINALITY.md). |
+| **It goes where fakes spread** | A Chrome extension checks an Instagram post or reel where you see it: [extension/](extension/README.md). |
 
 ---
 
@@ -24,6 +42,12 @@ limitations of the result. It runs fully offline on a laptop; evidence never lea
 Two views of every report: **Simple** (plain-English answer per file: *What is this file? Is it AI-made? Is it a
 screenshot? Was it edited?*) and **Expert** (every measurement). An offline **case assistant** answers questions
 like *"is this AI generated or a screenshot?"* using only the case's own measurements — no LLM, no internet.
+
+| Planted splice: boxed where it was pasted and cloned | Planted joined video: the cut found at exactly 4.0 s |
+|---|---|
+| ![Spliced test photo with red boxes on the pasted and cloned regions](docs/img/splice-boxes.jpg) | ![Frame-difference timeline with a spike at 4.0 s, above the per-frame AI-image scores](docs/img/video-timeline.png) |
+
+Both come from `test_assets/`: synthetic files with manipulations we planted ourselves, so the right answer is known.
 
 ### Browser extension: check a post where you see it
 
@@ -45,11 +69,11 @@ HF_HUB_OFFLINE=1 .venv/bin/python app.py     # force offline (venue without Wi-F
 
 ### Hosted demo (GitHub Codespaces, free hours)
 
-On GitHub: **Code → Codespaces → Create codespace on main**. `.devcontainer/` pulls the image that `.github/workflows/image.yml` builds from the
+Our running instance: <https://truthlens-xrw9944xr57c6xr7-7860.app.github.dev>. To start your own, on GitHub click **Code → Codespaces → Create codespace on main**. `.devcontainer/` pulls the image that `.github/workflows/image.yml` builds from the
 `Dockerfile` (published to `ghcr.io/yashas95/truthlens`) and starts TruthLens in hosted mode on port 7860. In the **Ports** tab, set port 7860 to
 **Public** to share the link. The first build takes ~10–15 min; later starts take a minute or two.
 
-### Hosted demo (Hugging Face Space)
+### Alternative: Hugging Face Space
 
 ```bash
 .venv/bin/hf auth login                                        # once, with your own write token
@@ -161,10 +185,13 @@ app.py                  FastAPI web app: upload, sample analysis, progress polli
 cli.py                  command-line analysis
 download_models.py      pre-download every model for offline use
 setup.sh                one-time setup
-Dockerfile              Hugging Face Space image (CPU PyTorch, pinned versions, models baked in)
+Dockerfile              container image (CPU PyTorch, pinned versions, models baked in), built by CI
+.devcontainer/          Codespaces: pull that image and start TruthLens on port 7860
+.github/workflows/      tests.yml (rule tests + extension checks on every push), image.yml (image → GHCR)
 truthlens/
   pipeline.py           orchestrates ingest → analyze → correlate → score → verify → report
   evidence.py           Case (hashing, read-only copies, integrity re-check, analysis log) and Indicator
+  acquisition.py        how the extension obtained a file (original, recording, frame, copy, screenshot), which checks apply
   image_forensics.py    metadata, ELA, sensor noise, copy-move, FFT, AI-image + face classifiers
   video_forensics.py    container tags, temporal cuts/duplicates, watermark overlay, per-frame ML, audio track
   audio_forensics.py    silence gaps, noise-floor splices, band limit, sample-rate lead, voice classifier, Whisper
@@ -175,6 +202,7 @@ truthlens/
   plain.py              plain-English answers (origin, AI?, screenshot?, edited?) for the Simple view and assistant
   report.py             self-contained HTML report (Simple + Expert views)
   models.py             lazy, fault-tolerant Hugging Face model loading
+  media_io.py           ffmpeg / ffprobe helpers (container info, audio decoding)
   config.py             model candidates, detector reliabilities, validated / unreliable model lists
   assets/               report.css, report.js, chat.js (offline case assistant) — inlined into each report
   hand_field.json       halftone hand animation data for the landing page
@@ -184,16 +212,16 @@ tools/
   regress.py            golden check: record every verdict and finding, prove later changes didn't alter them
   make_test_assets.py   generate planted manipulations (spliced photo, joined video, edited voice note)
   make_hand_field.py    build hand_field.json from the public-domain "Creation of Adam" image
-  run_demo_batch.sh     run every file in demo_samples/ and print verdicts
+  run_demo_batch.sh     run every file in demo_samples/ (or test_assets/) and print verdicts
   deploy_hf_space.py    create / update the Hugging Face Space
   test_audio_models.py  compare voice-deepfake models on known samples
 extension/              Chrome extension: check a post / reel in place (right-click or pick mode)
-tests/test_core.py      regression tests for the scoring and plain-language rules
+tests/test_core.py      regression tests for the scoring, plain-language and capture rules (no models needed)
 tests/golden.json       golden results for the synthetic test_assets/ (used by tools/regress.py)
 test_assets/            planted test media (synthetic, safe to share)
 docs/METHODOLOGY.md     dated evidence for every detection decision
 docs/ORIGINALITY.md     models + licenses, techniques we implemented, what we built
-docs/HANDOFF.md         original build notes
+docs/img/               screenshots used in this README
 ```
 
 ## Evidence handling and privacy
@@ -208,6 +236,10 @@ TruthLens reuses pretrained classifiers, and reuses them unmodified under their 
 *weakest* evidence. The scoring, cross-modal correlation, forensic implementations, evaluation harness, reports and
 extension are our own work. The full list of each model, its author and license, the published techniques we
 implemented, and what we built is in [docs/ORIGINALITY.md](docs/ORIGINALITY.md).
+
+## Team
+
+**Team YUVA** (team no. 5) · InnovEdge Hackathon 2026 · Team leader: **Yashas S**
 
 ## Credits
 
