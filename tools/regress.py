@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,9 +33,10 @@ def default_files() -> list[Path]:
 
 
 def snapshot(path: Path) -> dict:
-    case = Case()
-    run_case([(path, path.name)], "", None, case=case)
-    r = json.loads((case.dir / "report.json").read_text())
+    with tempfile.TemporaryDirectory() as tmp:   # throwaway case folder: a run must not leave copies of the media behind
+        case = Case(root=Path(tmp))
+        run_case([(path, path.name)], "", None, case=case)
+        r = json.loads((case.dir / "report.json").read_text())
     o = r["overall"]
     inds = sorted((i["detector"], i["supports"], round(i["score"], 2)) for i in r["indicators"])
     return {"likelihood": o["likelihood"], "band": o["band"], "confidence": o["confidence"],
