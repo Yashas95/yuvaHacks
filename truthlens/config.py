@@ -51,7 +51,7 @@ RELIABILITY = {
     "video_duplicate_frames": 0.45,
     "video_metadata": 0.35,
     "video_watermark": 0.30,   # visible corner overlay: a lead for a human to read, not proof on its own
-    "audio_ml": 0.30,          # lowered: model is unreliable on real-world audio (see HANDOFF P2)
+    "audio_ml": 0.30,          # lowered: model is unreliable on real-world audio (docs/METHODOLOGY.md §5)
     "audio_bandwidth": 0.20,
     "audio_format": 0.25,      # stored at a TTS-native sample rate (22.05 / 24 kHz): weak provenance lead
     "audio_digital_silence": 0.45,

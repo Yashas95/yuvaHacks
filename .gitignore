@@ -13,3 +13,6 @@ demo_samples/
 # presentation export (contains team-supplied photos)
 TruthLens_InnovEdge2026.pdf
 TruthLens_Deployment_Explained.pdf
+
+# internal working notes (superseded by docs/METHODOLOGY.md)
+docs/HANDOFF.md
