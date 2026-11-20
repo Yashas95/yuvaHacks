@@ -18,7 +18,7 @@ CONF_WORDS = {
     "Medium": "Reasonably sure, but a person should double-check.",
     "Low": "Not sure — treat this as a hint, not an answer.",
 }
-TYPE_NOUN = {"image": "picture", "video": "video", "audio": "recording", "text": "text"}
+TYPE_NOUN = {"image": "picture", "video": "video", "audio": "recording", "text": "text", "document": "document"}
 
 
 def _t(x: float) -> str:
@@ -146,6 +146,19 @@ def origin(ev: dict) -> dict:
         return {"kind": "capture", "label": f"Captured from {site} ({what})", "certain": True,
                 "why": f"The TruthLens extension captured this from {site}, so the original file's camera data, "
                        "dates and AI labels aren't available to check."}
+    if mod == "unknown":
+        return {"kind": "unsupported", "label": "Not checked", "certain": True,
+                "why": "TruthLens can't analyse this file type yet, so no checks ran on it."}
+    if mod == "document":
+        dm = ev.get("metrics") or {}
+        if dm.get("library"):
+            return {"kind": "generated", "label": f"Made by a program ({dm['library']})", "certain": True,
+                    "why": "The file carries the fingerprint of a document-writing library, not of Word, Google Docs or LibreOffice."}
+        if dm.get("made_with"):
+            return {"kind": "editor", "label": f"Saved in {dm['made_with']}", "certain": True,
+                    "why": "The file records the app it was saved in. That shows how it was saved, not who wrote the words."}
+        return {"kind": "unknown", "label": dm.get("kind") or "Document", "certain": False,
+                "why": "The file doesn't record which software made it."}
     if mod == "image":
         tag = "screenshot" in blob
         fname = bool(re.search(r"screen ?shot|screen ?grab|scrn", name, re.I))
@@ -192,8 +205,14 @@ def _ml_only(a: dict, inds: list) -> bool:
 def _headline(a: dict, org: dict, inds: list) -> tuple[str, str, str]:
     """(headline, colour, one-line explanation) for one assessment."""
     p = a["likelihood"]
+    if a.get("not_analysed") or org["kind"] == "unsupported":
+        return ("We couldn't check this file", "amber",
+                "TruthLens can't analyse this file type yet, so this is not a result. It checks photos, videos, audio, documents and text.")
     if org["kind"] == "ai":
         return "Made with AI", "red", "The file contains a label from an AI tool."
+    if org["kind"] == "generated" and p >= 45:
+        return ("Likely generated, not written in an editor", "orange",
+                "The file was produced by a document-writing program, which is how AI chat tools such as ChatGPT create files.")
     if _ml_only(a, inds) and a.get("validated_ml"):
         return ("Likely made with AI", "orange",
                 "Our tested AI detector is confident across the whole file, but nothing else in the file confirms it yet.")
@@ -208,8 +227,40 @@ def _headline(a: dict, org: dict, inds: list) -> tuple[str, str, str]:
     return "No clear signs of editing or AI", "green", "Nothing suspicious stood out — but that doesn't prove it's real."
 
 
+def _writing_answer(ev: dict, org: dict) -> str:
+    if org["kind"] == "unsupported":
+        return "<b>Not checked.</b> " + org["why"]
+    man = {i["detector"]: i for i in ev.get("indicators", []) if i["supports"] == "manipulation"}
+    m = ev.get("metrics") or {}
+    w = m.get("writing") or {}
+    parts = []
+    if org["kind"] == "ai":
+        parts.append("<b>Yes, very likely.</b> " + E(man["metadata_ai_signature"]["observation"]) + " That is direct evidence from the file.")
+    elif "text_chatbot_leftover" in man:
+        parts.append("<b>Very likely.</b> The text still contains an AI assistant's own words or formatting. " + E(man["text_chatbot_leftover"]["observation"]))
+    elif "document_generator" in man:
+        parts.append(f"<b>Likely.</b> The file was made by a program ({E(m.get('library'))}), not typed in Word or Google Docs. "
+                     "That is how ChatGPT and other AI assistants create the documents they let you download; websites and scripts make files this way too.")
+    if "document_history" in man:
+        parts.append("It also has no editing history: " + E(man["document_history"]["observation"]))
+    if "text_ai_vocabulary" in man:
+        parts.append("The wording uses vocabulary AI assistants over-use: " + E(man["text_ai_vocabulary"]["observation"]))
+    elif w.get("ai_vocab_per_1000") is not None:
+        parts.append(f"The wording itself doesn't stand out ({w['ai_vocab_per_1000']} AI-typical words per 1,000; we count it as a sign above 4).")
+    elif w.get("skipped"):
+        parts.append(f"The wording wasn't checked: {E(w['skipped'])}.")
+    if "document_ai_image" in man:
+        parts.append(E(man["document_ai_image"]["title"]) + ".")
+    if not parts or not man:
+        parts.insert(0, "<b>We can't tell.</b>")
+    parts.append("No tool can prove from the words alone who wrote a text, so TruthLens shows these signs rather than a verdict.")
+    return " ".join(parts)
+
+
 def _ai_answer(ev: dict, org: dict) -> str:
     mod = ev["modality"]
+    if mod in ("document", "text", "unknown"):
+        return _writing_answer(ev, org)
     inds = ev.get("indicators", [])
     ml = [i for i in inds if i["detector"] in ("ml_image_ai", "ml_face_deepfake", "audio_ml")]
     man_ml = [i for i in ml if i["supports"] == "manipulation"]
@@ -255,7 +306,8 @@ def _ai_answer(ev: dict, org: dict) -> str:
 
 def _screenshot_answer(ev: dict, org: dict) -> str:
     if ev["modality"] not in ("image", "video"):
-        return "Screenshots only apply to pictures and videos — this file is " + ("a recording." if ev["modality"] == "audio" else "text.")
+        return "Screenshots only apply to pictures and videos — this file is " + {"audio": "a recording.", "document": "a document.",
+                                                                                  "unknown": "not a picture or video."}.get(ev["modality"], "text.")
     if org["kind"] == "screenshot":
         return f"<b>Yes{'.' if org['certain'] else ', probably.'}</b> {org['why']}"
     if org["kind"] == "camera":
@@ -273,6 +325,8 @@ def _screenshot_answer(ev: dict, org: dict) -> str:
 
 
 def _edited_answer(ev: dict) -> str:
+    if ev["modality"] in ("document", "text", "unknown"):
+        return "<b>Not checked.</b> TruthLens doesn't look for edited passages in documents or text."
     fam = {"ela", "noise", "copy_move", "video_temporal", "video_duplicate_frames", "audio_digital_silence", "audio_splice", "metadata_editor", "metadata_dates"}
     hits = [i for i in ev.get("indicators", []) if i["detector"] in fam and i["supports"] == "manipulation"
             and not ("C2PA" in i["title"])]
@@ -308,6 +362,22 @@ def _facts(ev: dict) -> dict:
             f["Length"] = f"{m['duration_s']} s"
         if m.get("resolution"):
             f["Resolution"] = m["resolution"]
+    elif ev["modality"] == "document":
+        f["Type"] = m.get("kind") or "document"
+        f["Made with"] = m.get("made_with") or "not recorded"
+        if m.get("words"):
+            f["Words"] = m["words"]
+        if m.get("revision"):
+            f["Times saved"] = m["revision"]
+        if m.get("editing_minutes"):
+            f["Editing time"] = f"{m['editing_minutes']} min"
+        if m.get("created"):
+            f["Created"] = m["created"]
+        if m.get("pictures"):
+            f["Pictures inside"] = m["pictures"]
+        w = m.get("writing") or {}
+        if w.get("ai_vocab_per_1000") is not None:
+            f["AI-typical words"] = f"{w['ai_vocab_per_1000']} per 1,000"
     elif ev["modality"] == "audio":
         if m.get("duration_s"):
             f["Length"] = f"{m['duration_s']} s"
@@ -350,6 +420,9 @@ def next_steps(r: dict) -> list[str]:
         steps.append("Search for the same video from another angle or another source.")
     if "audio" in mods or "audio_ml" in det:
         steps.append("Compare the voice with a recording you know is genuine, or ask the person directly.")
+    if mods & {"document", "text"}:
+        steps.append("Ask the author for the editable original with its version history (Google Docs: File → Version history; "
+                     "Word: File → Info → Version history). A real draft shows the writing growing over several sessions.")
     if r.get("context_analysis"):
         steps.append("Check the claim on trusted news sites — real events are usually reported by more than one outlet.")
     steps.append("Ask whoever shared it for the original file — forwarded copies lose evidence.")
@@ -361,7 +434,7 @@ def build(r: dict) -> dict:
     files = [file_plain(ev) for ev in r["evidence"]]
     ov = r["overall"]
     any_ai = any(f["origin"]["kind"] == "ai" for f in files)
-    org = {"kind": "ai" if any_ai else "mixed"}
+    org = files[0]["origin"] if len(files) == 1 else {"kind": "ai" if any_ai else "mixed"}
     head, color, sub = _headline(ov, org, r["indicators"])
     if any_ai and len(files) > 1:
         head, sub = "At least one file was made with AI", "One of the files carries a label from an AI tool."

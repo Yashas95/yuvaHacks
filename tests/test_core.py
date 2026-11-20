@@ -140,6 +140,61 @@ def test_every_capture_method_gets_a_plain_label():
         assert limitation("x.png", ev["acquisition"]), m
 
 
+def _docx(path, core, app="", body="word " * 400):
+    import zipfile
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("docProps/core.xml", f"<cp:coreProperties xmlns:cp='x' xmlns:dc='y'>{core}</cp:coreProperties>")
+        z.writestr("docProps/app.xml", f"<Properties>{app}</Properties>")
+        z.writestr("word/document.xml", f"<w:document><w:body><w:p><w:t>{body}</w:t></w:p></w:body></w:document>")
+
+
+def test_document_made_by_a_program_is_flagged_but_one_typed_in_word_is_not():
+    """A ChatGPT-made .docx scored 1 % "looks normal": .docx wasn't analysed at all (2026-11-20). Now the file's own
+    fingerprint is read; a document typed in Word with an edit history raises nothing."""
+    import tempfile
+    from truthlens.document_forensics import analyze_document
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        case = NS(artifacts_dir=tmp)
+        gen, word = tmp / "gen.docx", tmp / "word.docx"
+        _docx(gen, "<dc:creator>Un-named</dc:creator><cp:lastModifiedBy>Un-named</cp:lastModifiedBy><cp:revision>1</cp:revision>"
+                   "<dcterms:created>2026-09-03T06:16:26Z</dcterms:created><dcterms:modified>2026-09-03T06:16:26Z</dcterms:modified>")
+        _docx(word, "<dc:creator>Asha</dc:creator><cp:revision>14</cp:revision>", "<Application>Microsoft Office Word</Application><TotalTime>95</TotalTime>")
+        counter = iter(range(100))
+        r = analyze_document(NS(id="E01", path=gen), case, lambda: f"E01-{next(counter):02d}")
+        assert {i.detector for i in r["indicators"]} == {"document_generator", "document_history"} and r["metrics"]["library"] == "docx.js"
+        assert aggregate(r["indicators"], set())["likelihood"] >= 45
+        r = analyze_document(NS(id="E02", path=word), case, lambda: f"E02-{next(counter):02d}")
+        assert r["indicators"] == [] and r["metrics"]["made_with"] == "Microsoft Word"
+
+
+def test_chatbot_leftovers_count_but_ordinary_writing_does_not():
+    from truthlens.ai_text import check_ai_writing
+    from truthlens.evidence import Findings
+    counter = iter(range(100))
+    out = Findings(NS(id="E01"), lambda: f"E01-{next(counter):02d}", "text")
+    check_ai_writing(out, "Certainly! Here is your report. " + "The team met on Monday and fixed the pump. " * 30 + "[Your Name]")
+    assert [i.detector for i in out] == ["text_chatbot_leftover"] and out[0].score >= 0.9
+    out = Findings(NS(id="E02"), lambda: f"E02-{next(counter):02d}", "text")
+    m = check_ai_writing(out, "We drove to the market early, bought rice and onions, and came home before the rain. " * 20)
+    assert len(out) == 0 and m["ai_vocab_per_1000"] == 0
+    assert check_ai_writing(out, "too short")["skipped"]
+
+
+def test_unsupported_file_is_never_reported_as_normal():
+    """A file type TruthLens can't read used to get "No clear signs of editing or AI, 1 %" after zero checks."""
+    import tempfile
+    from truthlens.evidence import Case
+    from truthlens.pipeline import run_case
+    from truthlens.plain import build
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "archive.zip"
+        f.write_bytes(b"PK\x03\x04 not analysable")
+        _, r = run_case([(f, f.name)], "", lambda *a: None, case=Case(root=Path(tmp) / "cases"))
+    p = build(r)
+    assert r["overall"]["not_analysed"] and p["headline"] == "We couldn't check this file" and p["files"][0]["origin"]["kind"] == "unsupported"
+
+
 if __name__ == "__main__":
     tests =[(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:

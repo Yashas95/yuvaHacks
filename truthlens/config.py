@@ -38,6 +38,11 @@ MODELS = {
 # These are deliberately conservative and are reported to the user.
 RELIABILITY = {
     "metadata_ai_signature": 0.90,   # e.g. Stable Diffusion params in PNG chunk
+    "document_generator": 0.60,      # document written by a programming library (how AI chat tools make files)
+    "document_history": 0.40,        # no saves / editing time recorded for a long document
+    "document_ai_image": 0.85,       # picture inside the document carries an AI label (C2PA)
+    "text_chatbot_leftover": 0.75,   # "Certainly! Here's…", "[Your Name]", leftover Markdown
+    "text_ai_vocabulary": 0.40,      # over-used AI vocabulary per 1,000 words; formal writing also uses it
     "metadata_editor": 0.55,
     "metadata_missing": 0.15,
     "metadata_dates": 0.40,

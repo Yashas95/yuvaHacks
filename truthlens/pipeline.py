@@ -7,10 +7,12 @@ from pathlib import Path
 
 from .acquisition import limitation as acquisition_limitation, skipped_image_checks
 from . import models
+from .ai_text import check_ai_writing
 from .audio_forensics import analyze_audio
 from .config import VERSION
 from .correlate import correlate
-from .evidence import Case, now
+from .document_forensics import analyze_document
+from .evidence import Case, Findings, now
 from .image_forensics import analyze_image
 from .report import render_html
 from .scoring import aggregate, recommended_checks
@@ -48,7 +50,7 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
     case.set_context(context_text)
 
     results, families, limitations = {}, set(), []
-    media = [e for e in case.evidence if e.modality in ("image", "video", "audio")]
+    media = [e for e in case.evidence if e.modality in ("image", "video", "audio", "document", "text")]
     for k, ev in enumerate(media):
         base = 8 + int(70 * k / max(1, len(media)))
         progress(base, f"Analyzing {ev.name} ({ev.modality})")
@@ -79,6 +81,17 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
                     limitations.append(f"{ev.name}: only the first {r['metrics']['frames_scanned']} of "
                                        f"{r['metrics']['frames_total']} frames were scanned for temporal checks.")
                 limitations.append(f"{ev.name}: ML detectors ran on {len(r['metrics'].get('frame_scores', []))} sampled frames, not every frame.")
+            elif ev.modality == "document":
+                r = analyze_document(ev, case, nid)
+                families |= {"document_generator", "document_history", "text_ai_vocabulary"}
+                if ev.path.suffix.lower() == ".pdf":
+                    limitations.append(f"{ev.name}: the text inside PDF files is not read yet, so only the file's "
+                                       "properties were checked; upload the .docx for a check of the wording too.")
+            elif ev.modality == "text":
+                out = Findings(ev, nid, "text")
+                w = check_ai_writing(out, ev.path.read_text(encoding="utf-8", errors="ignore"))
+                r = {"indicators": out, "metrics": {"writing": w}, "metadata": {}, "visuals": {}}
+                families.add("text_ai_vocabulary")
             else:
                 span = 70 / max(1, len(media))
                 r = analyze_audio(ev, case, nid, step=lambda f, m, b=base, sp=span, n=ev.name:
@@ -126,6 +139,14 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
                                                        if r["evidence"].modality == "image" else set())
         per_ev[eid] = aggregate(r["indicators"] + [i for i in x["indicators"] if eid in i.evidence_id.split("+")], fam)
     overall = aggregate(all_inds, families, len(missing))
+    unchecked = [e for e in case.evidence if e.id not in results]
+    for e in unchecked:
+        limitations.insert(0, f"{e.name}: TruthLens can't analyse this file type yet ({e.path.suffix or 'no extension'}), "
+                              "so no checks ran on it. Supported: photos, videos, audio, documents (.docx, .pptx, .xlsx, .pdf) and text.")
+        per_ev[e.id] = {**aggregate([], set()), "band": "Not analysed — file type not supported", "color": "amber",
+                        "likelihood": 0, "range": [0, 0], "not_analysed": True}
+    if unchecked and not results and not full_context.strip():
+        overall.update(band="Not analysed — file type not supported", color="amber", likelihood=0, range=[0, 0], not_analysed=True)
     if overall.get("ml_only"):
         limitations.insert(0, "Finding rests on ML classifiers only — no independent forensic, metadata or temporal evidence. "
                               + ("A validated detector was confident, so the likelihood was capped at Moderate (not Strong)."
@@ -176,6 +197,8 @@ def run_case(files: list[tuple[Path, str]], context_text: str = "", progress=Non
         "log": case.log,
         "indicators": [i.to_dict() for i in all_inds],
     }
+    for e in unchecked:
+        results[e.id] = {"evidence": e, "indicators": [], "visuals": {}, "metrics": {"not_analysed": True}}
     for eid, r in results.items():
         ev = r["evidence"]
         report["evidence"].append({

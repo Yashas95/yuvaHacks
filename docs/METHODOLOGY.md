@@ -180,6 +180,29 @@ per type, ideally re-shared through WhatsApp/Instagram), and evaluating two Apac
 (`abhishtagatya/hubert-base-960h-itw-deepfake`, 378 MB; `garystafford/wav2vec2-deepfake-voice-detector`, 1.26 GB)
 with `tools/eval_detectors.py` before trusting either.
 
+## 9. A ChatGPT-made report scored 1 % "looks normal" (2026-11-20)
+
+**What happened.** A teammate uploaded an event report (.docx) that ChatGPT had written. TruthLens answered
+"No clear signs of editing or AI, 1 %". The report showed *0 files* analysed in 0.0 s: `.docx` was not a supported
+type, so no check ran, yet the empty result was presented as "looks normal".
+
+**Fixes.**
+1. Any file TruthLens can't analyse now says "We couldn't check this file" and lists the supported types. It never
+   gets a likelihood. (Pinned by `test_unsupported_file_is_never_reported_as_normal`.)
+2. Documents are analysed (`document_forensics.py`). The report's own properties gave it away: author
+   "Un-named" (the placeholder the docx JavaScript library writes), no editing app, saved once, created and modified
+   at the same moment, despite 3,154 words. That is how AI chat tools generate downloadable files, but websites
+   and scripts do it too, so it counts as a lead (reliability 0.6), with that alternative printed.
+   Result: **54 % Moderate**, "Likely generated, not written in an editor". A Word document with an edit history
+   raises nothing (pinned by a test).
+3. Wording: `ai_text.py` reports chatbot leftovers (near-direct) and AI-over-used vocabulary (weak). On this report
+   the vocabulary rate was 3.8 per 1,000 words, below our threshold of 4, and **we did not lower the threshold to
+   catch it**: tuning to one file would make it misfire on formal human writing. The file fingerprint caught it.
+
+**Also fixed.** Uploads of ~26 MB failed on the hosted demo with "413 Request Entity Too Large" (GitHub's proxy
+limit) and the page printed raw HTML. Files now go up in 8 MB pieces (`/api/upload_chunk`), checked end to end
+with a 30 MB file, and errors are shown as plain sentences.
+
 ## Current results (2026-11-20, this code)
 
 | File | Truth | TruthLens |

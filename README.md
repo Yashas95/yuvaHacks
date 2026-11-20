@@ -108,6 +108,8 @@ self-contained `report.html` (print → PDF).
 | **Audio signal** | Digital-silence gaps inside speech, background noise-floor jumps (splices), band-limited spectrum | signal processing |
 | **ML classifiers** | AI-image classifier on images and sampled frames, face deepfake classifier on detected faces (YuNet; scores shown, not counted), synthetic-voice classifier (not run) | learned, *weakest* |
 | **Context** | Claim extraction (dates, entities, numbers), persuasion language, CLIP caption ↔ visual, Whisper caption ↔ speech (only for claims about speech) | cross-modal |
+| **Documents** | `.docx/.pptx/.xlsx/.pdf`: the software that wrote the file (document libraries that AI chat tools use vs. Word / Google Docs), AI tool names in properties, edit history (saves, editing time), AI labels on pictures inside | direct, non-ML |
+| **Writing** | Chatbot leftovers (“Certainly! Here's…”, “[Your Name]”, Markdown) and AI-over-used vocabulary per 1,000 words, each listed with counts. Shown as signs, never as proof of authorship | heuristic, weak |
 | **Corroboration** | A video cut that coincides with a localized audio edit; same scene across files | cross-modal |
 
 ### Scoring (`truthlens/scoring.py`)

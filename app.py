@@ -109,16 +109,61 @@ def _start(saved, context, acquisition=None):
     return {"job": job, "case_id": case.id}
 
 
+UPLOADS = Path(tempfile.gettempdir()) / "truthlens_uploads"
+MAX_UPLOAD = 1024 * 1024 * 1024
+
+
+def _sweep_uploads(max_age_s=2 * 3600):
+    import time
+    for d in UPLOADS.glob("*"):
+        if d.is_dir() and time.time() - d.stat().st_mtime > max_age_s:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+@app.post("/api/upload_chunk")
+async def upload_chunk(chunk: UploadFile = File(...), name: str = Form(...), offset: int = Form(...),
+                       upload: str = Form(default="")):
+    """Large files arrive in pieces: hosting proxies such as GitHub Codespaces reject request bodies of ~25 MB.
+    The first piece (offset 0, no `upload`) opens an upload; each later piece must start where the file ends."""
+    if not upload:
+        if offset != 0:
+            raise HTTPException(400, "The first piece must start at offset 0.")
+        _sweep_uploads()
+        upload = uuid.uuid4().hex
+    if not re.fullmatch(r"[0-9a-f]{32}", upload):
+        raise HTTPException(400, "Bad upload id.")
+    d = UPLOADS / upload
+    d.mkdir(parents=True, exist_ok=True)
+    data = d / "data"
+    size = data.stat().st_size if data.exists() else 0
+    if offset != size:
+        raise HTTPException(409, f"Expected the piece at offset {size}.")
+    with open(data, "ab") as out:
+        shutil.copyfileobj(chunk.file, out)
+    if data.stat().st_size > MAX_UPLOAD:
+        shutil.rmtree(d, ignore_errors=True)
+        raise HTTPException(413, "Files over 1 GB are not accepted.")
+    (d / "name").write_text(Path(name).name[:200] or "file")
+    return {"upload": upload, "size": data.stat().st_size}
+
+
 @app.post("/api/analyze")
 async def analyze(files: list[UploadFile] = File(default=[]), context: str = Form(default=""),
-                  acquisition: str = Form(default="")):
+                  acquisition: str = Form(default=""), uploads: list[str] = Form(default=[])):
     """Upload files (and an optional claim). The browser extension also sends `acquisition`: a JSON description of
     how it obtained the media (original file, recording, frame or screenshot; page URL; time). See acquisition.py."""
     files = [f for f in files if f.filename]
-    if not files and not context.strip():
+    uploads = [u for u in uploads if re.fullmatch(r"[0-9a-f]{32}", u) and (UPLOADS / u / "data").exists()]
+    if not files and not uploads and not context.strip():
         raise HTTPException(400, "Upload at least one file or enter a claim.")
     tmp = Path(tempfile.mkdtemp(prefix="tl_"))
     saved = []
+    for u in uploads:
+        name = (UPLOADS / u / "name").read_text()
+        p = tmp / name
+        shutil.move(str(UPLOADS / u / "data"), p)
+        shutil.rmtree(UPLOADS / u, ignore_errors=True)
+        saved.append((p, name))
     for f in files:
         p = tmp / Path(f.filename).name
         with open(p, "wb") as out:

@@ -16,6 +16,7 @@ IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus"}
 TEXT_EXT = {".txt", ".md", ".srt", ".vtt", ".json"}
+DOC_EXT = {".docx", ".pptx", ".xlsx", ".pdf"}
 
 
 def now() -> str:
@@ -40,6 +41,8 @@ def modality_of(path: Path) -> str:
         return "audio"
     if ext in TEXT_EXT:
         return "text"
+    if ext in DOC_EXT:
+        return "document"
     mt = mimetypes.guess_type(str(path))[0] or ""
     return mt.split("/")[0] if mt.split("/")[0] in {"image", "video", "audio", "text"} else "unknown"
 

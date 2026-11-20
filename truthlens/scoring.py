@@ -39,6 +39,8 @@ FAMILY = {
     "text_language": "context", "xmodal_caption_visual": "context",
     "xmodal_caption_transcript": "context", "xmodal_dates": "context",
     "xmodal_corroboration": "corroboration",
+    "document_generator": "provenance", "document_history": "provenance", "document_ai_image": "provenance",
+    "text_chatbot_leftover": "writing", "text_ai_vocabulary": "writing",
 }
 ML_FAMILIES = {"ml"}
 ML_ONLY_CAP = 0.44          # likelihood ceiling when no non-ML family is present (keeps it in the Inconclusive band)
