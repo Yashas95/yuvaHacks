@@ -241,6 +241,11 @@ implemented, and what we built is in [docs/ORIGINALITY.md](docs/ORIGINALITY.md).
 
 **Team YUVA** (team no. 5) · InnovEdge Hackathon 2026 · Team leader: **Yashas S**
 
+## License
+
+Our code is released under the [MIT License](LICENSE). The pretrained models keep their own licenses, listed in
+[docs/ORIGINALITY.md](docs/ORIGINALITY.md).
+
 ## Credits
 
 Landing-page hand motif derived from Michelangelo, *The Creation of Adam* (public domain), via Wikimedia Commons.
